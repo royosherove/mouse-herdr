@@ -33,6 +33,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     func applicationDidFinishLaunching(_ note: Notification) {
         let args = CommandLine.arguments
 
+        // Developer aid: draw the agent ring to a PNG with sample or live agents.
+        if let i = args.firstIndex(of: "--snapshot-ring"), i + 1 < args.count {
+            let model = RingModel()
+            var list: [AgentInfo] = []
+            if args.contains("--live"), let hc = AgentWatcher.tool("hc") {
+                let p = Process(); p.executableURL = URL(fileURLWithPath: hc); p.arguments = ["ls", "--json"]
+                let out = Pipe(); p.standardOutput = out; try? p.run()
+                list = AgentWatcher.parse(out.fileHandleForReading.readDataToEndOfFile())
+            } else {
+                let sample: [(String, String, String)] = [
+                    ("blocked", "payments-api", "review"), ("blocked", "mobile-app", "2"), ("done", "docs-site", "1"),
+                    ("working", "mightymouse", "1"), ("working", "search-index", "bench"), ("done", "infra", "deploy"),
+                    ("idle", "playground", "3"), ("working", "web-client", "tests"),
+                ]
+                list = AgentWatcher.parse(try! JSONSerialization.data(withJSONObject: ["terminals": sample.enumerated().map { i, s in
+                    ["address": "t\(i)", "agent": "claude-code", "status": s.0, "where": "\(s.1) / \(s.2)"]
+                }]))
+            }
+            model.layout(list)
+            model.highlighted = model.placed.dropFirst(3).first?.id
+            let view = ZStack { Color(white: 0.55); RingView(model: model) }.frame(width: RingView.side, height: RingView.side)
+            let r = ImageRenderer(content: view)
+            r.scale = 1.5
+            if let cg = r.cgImage {
+                try? NSBitmapImageRep(cgImage: cg).representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: args[i + 1]))
+            }
+            NSApp.terminate(nil)
+            return
+        }
+
         // Developer aid: draw the window to a PNG without touching the mouse.
         if let i = args.firstIndex(of: "--snapshot"), i + 1 < args.count {
             snapshot(to: args[i + 1], dark: args.contains("--dark"), slot: args.contains("--gesture") ? .gesture : .thumbPanel)

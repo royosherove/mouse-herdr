@@ -9,6 +9,8 @@ enum Wave: UInt8 {
     case swipe = 0x03     // damp collision
     case tick = 0x04      // subtle collision
     case hello = 0x05     // happy alert
+    case finished = 0x07  // completed
+    case knock = 0x0C     // knock
     case hover = 0x1B     // whisper collision
 }
 

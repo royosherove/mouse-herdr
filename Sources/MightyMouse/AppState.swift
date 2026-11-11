@@ -111,7 +111,8 @@ final class WindowDragger {
 
     private var loggedFailure = false
 
-    func end() {
+    func end(snap: Bool = true) {
+        if !snap { zone = nil }
         if timer != nil { Log.write("drag: dropped at \(Int(last.x)),\(Int(last.y))\(zone != nil ? " (snapped)" : "")") }
         if let window, var origin = zone?.origin, var size = zone?.size {
             // Position, size, then position again — some apps clamp the first move.
@@ -157,6 +158,13 @@ final class AppState: ObservableObject {
     @Published var feelEdges = UserDefaults.standard.object(forKey: "feelEdges") as? Bool ?? true {
         didSet { UserDefaults.standard.set(feelEdges, forKey: "feelEdges"); applyFeel() }
     }
+    @Published var ringOnTap = UserDefaults.standard.object(forKey: "ringOnTap") as? Bool ?? true {
+        didSet { UserDefaults.standard.set(ringOnTap, forKey: "ringOnTap") }
+    }
+    @Published var feelAgents = UserDefaults.standard.object(forKey: "feelAgents") as? Bool ?? true {
+        didSet { UserDefaults.standard.set(feelAgents, forKey: "feelAgents") }
+    }
+    @Published var agentsAvailable = false
     @Published var snapWindows = UserDefaults.standard.object(forKey: "snapWindows") as? Bool ?? true {
         didSet { UserDefaults.standard.set(snapWindows, forKey: "snapWindows"); applyFeel() }
     }
@@ -166,6 +174,13 @@ final class AppState: ObservableObject {
     let tap = ButtonTap()
     let dragger = WindowDragger()
     let feeler = HoverFeeler()
+    let agents = AgentWatcher()
+    let ring = AgentRing()
+    private var agentStatus: [String: String] = [:]
+    private var agentsSeen = false
+    private var ticks = 0
+    private var ringPress = false
+    private var dragStartMouse = CGPoint.zero
     private var wheelAcc = 0.0
     private var wheelLast = Date.distantPast
     private var wheelReady = Date.distantPast
@@ -223,8 +238,11 @@ final class AppState: ObservableObject {
             self.release(slot)
         }
         tap.onPlainClick = { [weak self] in
+            guard let self else { return false }
+            // With the agent ring open, a click picks the agent being aimed at.
+            if self.ring.isOpen { self.ring.choose(); return true }
             // A normal click drops a window that is being carried.
-            guard let self, self.stickyDrag else { return false }
+            guard self.stickyDrag else { return false }
             self.stickyDrag = false
             self.dragger.end()
             return true
@@ -240,6 +258,9 @@ final class AppState: ObservableObject {
             self.buzz(.tick)
         }
         if accessibilityOK { tap.start() }
+        agentsAvailable = agents.isAvailable
+        ring.onAim = { [weak self] in self?.buzz(.tick) }
+        ring.onChoose = { [weak self] agent in self?.agents.focus(agent) }
 
         hid.onStatus = { [weak self] s in
             guard let self else { return }
@@ -268,6 +289,8 @@ final class AppState: ObservableObject {
 
     private func tick() {
         refreshPermissions()
+        ticks += 1
+        if ticks % 2 == 0 { watchAgents() }
         if accessibilityOK && !tap.isRunning { tap.start(); updateAvailability(); applyFeel() }
         if hidStatus == .notPermitted {
             // macOS sometimes refuses the first attempt right after launch, so keep trying quietly.
@@ -318,6 +341,35 @@ final class AppState: ObservableObject {
         }
         launchAtLogin = SMAppService.mainApp.status == .enabled
         Log.write("launch at login: \(launchAtLogin)")
+    }
+
+    // MARK: Agents
+
+    /// Notice agents that start waiting on you or finish, and say so through the thumb pad.
+    private func watchAgents() {
+        guard agentsAvailable, (feelAgents && hapticsOn && hapticsAvailable) || ring.isOpen else { return }
+        agents.fetch { [weak self] list in
+            guard let self else { return }
+            self.ring.update(list)
+            var next: [String: String] = [:]
+            var nowWaiting = false, nowDone = false
+            for a in list {
+                next[a.id] = a.status
+                guard self.agentsSeen, let before = self.agentStatus[a.id], before != a.status else { continue }
+                if a.needsYou { nowWaiting = true }
+                else if a.status == "done" && before == "working" { nowDone = true }
+            }
+            self.agentStatus = next
+            self.agentsSeen = true
+            guard self.feelAgents else { return }
+            if nowWaiting { Log.write("agents: one needs you"); self.buzz(.knock) }
+            else if nowDone { Log.write("agents: one finished"); self.buzz(.finished) }
+        }
+    }
+
+    private func openRing() {
+        ring.show(agents.latest)
+        agents.fetch { [weak self] list in self?.ring.update(list) }
     }
 
     // MARK: Haptics and extras
@@ -434,6 +486,11 @@ final class AppState: ObservableObject {
         if slot == .gesture { gestureDown(); return }
         let a = action(slot)
         guard a.isDrag else { ActionRunner.run(a); return }
+        if ring.isOpen {                // pressing the pad again picks from the ring
+            ringPress = true
+            return
+        }
+        dragStartMouse = CGEvent(source: nil)?.location ?? .zero
         if stickyDrag {                 // second press drops the window
             stickyDrag = false
             dragger.end()
@@ -445,14 +502,22 @@ final class AppState: ObservableObject {
 
     private func release(_ slot: Slot) {
         if slot == .gesture { gestureUp(); return }
-        guard action(slot).isDrag, dragger.isDragging, !stickyDrag else { return }
+        guard action(slot).isDrag else { return }
+        if ringPress { ringPress = false; ring.choose(); return }
+        guard !stickyDrag else { return }
         if pulseSource {
-            // A quick tap (or a button that can't be held): carry the window until the next click.
+            // A button that can't be held: carry the window until the next click.
+            guard dragger.isDragging else { return }
             stickyDrag = true
             Log.write("drag: carrying until next click")
-        } else {
-            dragger.end()
+            return
         }
+        // A quick press without moving is a tap, not a drag.
+        let now = CGEvent(source: nil)?.location ?? dragStartMouse
+        let moved = hypot(now.x - dragStartMouse.x, now.y - dragStartMouse.y)
+        let quick = Date().timeIntervalSince(dragPressed) < 0.30 && moved < 6
+        dragger.end(snap: !quick)
+        if quick && ringOnTap && agentsAvailable { openRing() }
     }
 
     private func gestureDown() {
@@ -529,6 +594,7 @@ final class AppState: ObservableObject {
     }
 
     func shutdown() {
+        ring.close()
         feeler.stop()
         dragger.end()
         hid.releaseAll()

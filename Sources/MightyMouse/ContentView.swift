@@ -324,6 +324,20 @@ struct ExtrasView: View {
             }
 
             Divider()
+            VStack(alignment: .leading, spacing: 6) {
+                Toggle("Tap the haptic panel for the agent ring", isOn: $state.ringOnTap)
+                    .font(.system(size: 13, weight: .medium))
+                Text("A quick tap shows your Herdr agents around the pointer, with the ones waiting on you highlighted and closest. Aim at one and click or tap again to jump to it. Holding still drags windows.")
+                    .font(.system(size: 11.5)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                Toggle("Feel when an agent needs me or finishes", isOn: $state.feelAgents)
+                    .font(.system(size: 13, weight: .medium)).disabled(!state.hapticsOn)
+                if !state.agentsAvailable {
+                    Label("Needs herdr-core (the hc command) installed.", systemImage: "info.circle")
+                        .font(.system(size: 11.5)).foregroundStyle(Palette.accent)
+                }
+            }
+
+            Divider()
             VStack(alignment: .leading, spacing: 4) {
                 Toggle("Snap windows at screen edges", isOn: $state.snapWindows).font(.system(size: 13, weight: .medium))
                 Text("While dragging with the haptic panel, push into the left or right edge for half the screen, the top for full screen, or a corner for a quarter.")

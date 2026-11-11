@@ -68,7 +68,7 @@ enum Slot: String, CaseIterable, Codable, Identifiable {
         case .gesture: return "The side button nearest the front. Click it, or hold it and move the mouse for four more actions."
         case .forward: return "The front one of the two thumb buttons."
         case .back: return "The rear one of the two thumb buttons."
-        case .thumbPanel: return "The pressable pad under your thumb. With “Drag the window”, point at any window, hold the pad and move the mouse; let go to drop it."
+        case .thumbPanel: return "The pressable pad under your thumb. With “Drag the window”, point at any window, hold the pad and move the mouse; let go to drop it. A quick tap opens the agent ring."
         case .thumbWheel: return "The little wheel by your thumb. Out of the box it scrolls sideways."
         default: return ""
         }
