@@ -66,7 +66,9 @@ fi
 security list-keychains -d user | grep -q "$KC" || \
   security list-keychains -d user -s $(security list-keychains -d user | tr -d '"') "$KC"
 security unlock-keychain -p mightymouse "$KC"
-codesign --force --keychain "$KC" --sign "MightyMouse Local Signing" --identifier "$BUNDLE_ID" "$APP"
+# Sign by the certificate's fingerprint, so another copy of this project on the same Mac can't be confused with it.
+CERT=$(security find-certificate -c "MightyMouse Local Signing" -Z "$KC" | awk '/SHA-1 hash:/ {print $NF}')
+codesign --force --keychain "$KC" --sign "$CERT" --identifier "$BUNDLE_ID" "$APP"
 echo "built $APP"
 
 if [ "${1:-}" = "install" ]; then
