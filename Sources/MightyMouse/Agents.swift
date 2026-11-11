@@ -85,13 +85,65 @@ struct AgentInfo: Identifiable, Equatable {
     }
 }
 
+/// Whether herdr-core, the thing that knows about the agents, can be reached.
+/// Herdr is optional, so every state here is a normal one to be in.
+enum HerdrStatus: Equatable {
+    case unknown                // not asked yet
+    case notInstalled           // no `hc` command on this Mac
+    case notRunning             // `hc` is there, but it failed, timed out or made no sense
+    case running(agents: Int)   // answered; the count may be zero
+
+    /// A short description for the settings window and the log.
+    var summary: String {
+        switch self {
+        case .unknown: return "checking…"
+        case .notInstalled: return "not installed"
+        case .notRunning: return "installed, but not running"
+        case .running(let n): return n == 0 ? "running, no agents" : "running, \(n) agent\(n == 1 ? "" : "s")"
+        }
+    }
+
+    var isRunning: Bool { if case .running = self { return true }; return false }
+
+    /// Developer aid: the names the snapshot modes accept after `--state`.
+    init?(flag: String) {
+        switch flag {
+        case "not-installed": self = .notInstalled
+        case "not-running": self = .notRunning
+        case "empty": self = .running(agents: 0)
+        case "unknown": self = .unknown
+        default: return nil
+        }
+    }
+}
+
 /// Reads agent state from herdr-core (`hc`) and asks the Herdr app to show one.
 final class AgentWatcher {
     private let queue = DispatchQueue(label: "mm.agents", qos: .userInitiated)
+    /// Answers and jumps go on their own queue so a slow listing can't hold them up.
+    private let actions = DispatchQueue(label: "mm.agents.actions", qos: .userInitiated)
     private static let shells: Set<String> = ["zsh", "bash", "fish", "sh", "nu", "pwsh", "powershell", "dash", "ksh", "tcsh"]
     private(set) var latest: [AgentInfo] = []
+    /// What the last fetch found out about Herdr itself. Read on the main thread.
+    private(set) var status = HerdrStatus.unknown
+    /// Jumping to an agent needs the Herdr app; viewing and answering do not.
+    private(set) var appInstalled = true
+    /// Developer aid: snapshots pin the state so a real fetch can't change the picture.
+    var pinned: (status: HerdrStatus, app: Bool)? {
+        didSet { if let pinned { status = pinned.status; appInstalled = pinned.app } }
+    }
+
+    static let appBundleID = "dev.herdr.app"
+    /// How long any one `hc` or `herdr-app` call may take before it is given up on.
+    static let timeout: TimeInterval = 4
 
     static func tool(_ name: String) -> String? {
+        // Developer aid: MIGHTYMOUSE_HC / MIGHTYMOUSE_HERDR_APP name the exact file to use
+        // (or one that doesn't exist), to try out the "not installed" and "not running" cases.
+        let key = "MIGHTYMOUSE_" + name.uppercased().replacingOccurrences(of: "-", with: "_")
+        if let forced = ProcessInfo.processInfo.environment[key] {
+            return FileManager.default.isExecutableFile(atPath: forced) ? forced : nil
+        }
         let home = NSHomeDirectory()
         for dir in ["\(home)/.local/bin", "/opt/homebrew/bin", "/usr/local/bin", "\(home)/.cargo/bin"] {
             let p = "\(dir)/\(name)"
@@ -100,24 +152,57 @@ final class AgentWatcher {
         return nil
     }
 
-    var isAvailable: Bool { Self.tool("hc") != nil }
+    /// True when the Herdr app can be asked to show an agent: its command or the app itself is here.
+    static func herdrAppInstalled() -> Bool {
+        if tool("herdr-app") != nil { return true }
+        // The override above also hides the app, so "no Herdr app" can be tried on a Mac that has it.
+        if ProcessInfo.processInfo.environment["MIGHTYMOUSE_HERDR_APP"] != nil { return false }
+        return NSWorkspace.shared.urlForApplication(withBundleIdentifier: appBundleID) != nil
+    }
 
-    private static func run(_ path: String, _ args: [String]) -> Data? {
+    /// Run a command and return what it printed, or nil if it failed or took too long.
+    /// Never call this on the main thread.
+    static func run(_ path: String, _ args: [String], timeout: TimeInterval = AgentWatcher.timeout) -> Data? {
+        final class Box { var data = Data() }
         let p = Process()
         p.executableURL = URL(fileURLWithPath: path)
         p.arguments = args
         let out = Pipe()
         p.standardOutput = out
-        p.standardError = Pipe()
-        do { try p.run() } catch { return nil }
-        let data = out.fileHandleForReading.readDataToEndOfFile()
-        p.waitUntilExit()
-        return p.terminationStatus == 0 ? data : nil
+        p.standardError = FileHandle.nullDevice
+        p.standardInput = FileHandle.nullDevice
+        do { try p.run() } catch {
+            Log.write("agents: could not start \(path): \(error.localizedDescription)")
+            return nil
+        }
+        // Read on another thread so a command that never finishes can't keep us waiting.
+        let box = Box(), finished = DispatchSemaphore(value: 0)
+        DispatchQueue.global(qos: .utility).async {
+            box.data = out.fileHandleForReading.readDataToEndOfFile()
+            finished.signal()
+        }
+        let deadline = Date().addingTimeInterval(timeout)
+        var ended = finished.wait(timeout: .now() + timeout) == .success
+        // It may have closed its output and still be going.
+        while ended && p.isRunning { if Date() > deadline { ended = false } else { usleep(20_000) } }
+        guard ended else {
+            p.terminate()
+            DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 1) {
+                if p.isRunning { kill(p.processIdentifier, SIGKILL) }
+            }
+            let name = ([(path as NSString).lastPathComponent] + args.prefix(2)).joined(separator: " ")
+            Log.write("agents: \(name) did not answer within \(Int(timeout)) seconds; gave up")
+            return nil
+        }
+        return p.terminationStatus == 0 ? box.data : nil
     }
 
-    static func parse(_ data: Data) -> [AgentInfo] {
+    static func parse(_ data: Data) -> [AgentInfo] { parseList(data) ?? [] }
+
+    /// The agents in `hc ls --json` output, or nil when that isn't what the data is.
+    static func parseList(_ data: Data) -> [AgentInfo]? {
         guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let terms = root["terminals"] as? [[String: Any]] else { return [] }
+              let terms = root["terminals"] as? [[String: Any]] else { return nil }
         var out: [AgentInfo] = []
         for t in terms {
             guard let id = t["address"] as? String else { continue }
@@ -185,17 +270,33 @@ final class AgentWatcher {
         return out
     }
 
-    /// Fetch the current agents; the result arrives on the main thread.
+    /// Ask herdr-core what is running. Works out the state of Herdr from how the call went,
+    /// so a missing, stopped or stuck herdr-core each come back as an answer rather than a failure.
+    static func look(details: Bool) -> (status: HerdrStatus, agents: [AgentInfo]) {
+        guard let hc = tool("hc") else { return (.notInstalled, []) }
+        // A failed, slow or garbled listing all mean the same to the person: it isn't answering.
+        guard let data = run(hc, ["ls", "--json"]), var list = parseList(data) else { return (.notRunning, []) }
+        if details { list = addDetails(list, hc: hc) }
+        return (.running(agents: list.count), list)
+    }
+
+    /// Fetch the current agents; the result arrives on the main thread, with `status` and
+    /// `appInstalled` brought up to date first.
     func fetch(details: Bool = false, _ done: @escaping ([AgentInfo]) -> Void) {
         queue.async {
-            var list: [AgentInfo] = []
-            if let hc = Self.tool("hc"), let data = Self.run(hc, ["ls", "--json"]) {
-                list = Self.parse(data)
-                if details { list = Self.addDetails(list, hc: hc) }
-            }
+            let found = Self.look(details: details)
+            let app = Self.herdrAppInstalled()
             DispatchQueue.main.async {
-                self.latest = list
-                done(list)
+                if self.pinned == nil {
+                    if found.status.summary != self.status.summary, !(found.status.isRunning && self.status.isRunning) {
+                        Log.write("agents: herdr-core \(found.status.summary)")
+                    }
+                    if app != self.appInstalled { Log.write("agents: Herdr app \(app ? "found" : "not installed")") }
+                    self.status = found.status
+                    self.appInstalled = app
+                    self.latest = found.agents
+                }
+                done(self.latest)
             }
         }
     }
@@ -203,36 +304,45 @@ final class AgentWatcher {
     /// Answer the agent's question by pressing the number of the chosen option in its terminal.
     func answer(_ agent: AgentInfo, option: Int) {
         Log.write("agents: answering \(agent.id) with option \(option + 1)")
-        queue.async {
-            guard let hc = Self.tool("hc") else { return }
-            if Self.run(hc, ["keys", agent.id, "\(option + 1)"]) == nil { Log.write("agents: hc keys failed") }
+        actions.async {
+            guard let hc = Self.tool("hc") else { Log.write("agents: can't answer, hc is not installed"); return }
+            if Self.run(hc, ["keys", agent.id, "\(option + 1)"]) == nil { Log.write("agents: hc keys failed; the answer was not sent") }
         }
     }
 
     /// Answer in the person's own words: pick the dialog's free-text choice, then type the text.
     func answer(_ agent: AgentInfo, typed text: String) {
-        guard let number = agent.typeOption else { return }
+        guard let number = agent.typeOption else {
+            Log.write("agents: can't type an answer to \(agent.id), its question has no free-text choice")
+            return
+        }
         Log.write("agents: answering \(agent.id) with typed text (\(text.count) characters)")
-        queue.async {
-            guard let hc = Self.tool("hc") else { return }
-            if Self.run(hc, ["keys", agent.id, "\(number)"]) == nil { Log.write("agents: hc keys failed"); return }
+        actions.async {
+            guard let hc = Self.tool("hc") else { Log.write("agents: can't answer, hc is not installed"); return }
+            if Self.run(hc, ["keys", agent.id, "\(number)"]) == nil { Log.write("agents: hc keys failed; the answer was not sent"); return }
             Thread.sleep(forTimeInterval: 0.7)
-            if Self.run(hc, ["send", "--force", agent.id, text]) == nil { Log.write("agents: hc send failed") }
+            if Self.run(hc, ["send", "--force", agent.id, text]) == nil { Log.write("agents: hc send failed; the answer was not sent") }
         }
     }
 
     /// Bring this agent's terminal to the front in the Herdr app.
     func focus(_ agent: AgentInfo) {
         Log.write("agents: focusing \(agent.id) (\(agent.space) / \(agent.tab))")
-        queue.async {
+        actions.async {
+            guard Self.herdrAppInstalled() else {
+                Log.write("agents: can't jump to \(agent.id), the Herdr app is not installed")
+                return
+            }
             if let app = Self.tool("herdr-app") {
                 let ok = Self.run(app, ["do", "agent.focus", "{\"terminal\":\"\(agent.id)\"}"]) != nil
                 if !ok { Log.write("agents: herdr-app agent.focus failed") }
+            } else {
+                Log.write("agents: no herdr-app command, so Herdr opens without picking the agent")
             }
             // Bring the Herdr window forward. Going through Launch Services works even though
             // MightyMouse itself is a background app; a plain activate() request gets ignored.
             DispatchQueue.main.async {
-                guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "dev.herdr.app") else {
+                guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: Self.appBundleID) else {
                     Log.write("agents: Herdr app not found")
                     return
                 }
@@ -266,7 +376,39 @@ final class RingModel: ObservableObject {
         var mid: Double { (start + end) / 2 }
     }
 
+    /// What the wheel says in its middle when it has no agents to show.
+    struct Notice: Equatable {
+        var symbol: String
+        var title: String
+        var detail: String
+        var tint = Color(white: 0.75)
+
+        static let notInstalled = Notice(
+            symbol: "shippingbox", title: "Herdr isn't installed",
+            detail: "This wheel shows the coding agents you run with Herdr. Get it at herdr.dev.\nTo stop this tap, see Haptics & extras.")
+        static let notRunning = Notice(
+            symbol: "moon.zzz.fill", title: "herdr-core isn't running",
+            detail: "It is installed but didn't answer. Start it with “hc\u{00A0}server\u{00A0}start” and your agents will appear here.",
+            tint: Palette.accent)
+        static let empty = Notice(
+            symbol: "circle.dashed", title: "No agents found",
+            detail: "herdr-core is running, but there are no coding agents in it right now.",
+            tint: Color(red: 0.30, green: 0.80, blue: 0.47))
+        static let noApp = Notice(
+            symbol: "macwindow.badge.plus", title: "No Herdr app installed",
+            detail: "Jumping to an agent needs the Herdr app from herdr.dev. Reading and answering here still work.",
+            tint: Palette.accent)
+    }
+
     @Published var slices: [Slice] = []
+    @Published var notice: Notice?
+    /// True until Herdr has answered for the first time; the hub says it is looking.
+    @Published var looking = false
+    /// False when the Herdr app is missing, so a wedge can't be jumped to.
+    @Published var canJump = true
+    var herdr = HerdrStatus.unknown
+    /// A notice that stays until the wheel closes, whatever new data says.
+    var heldNotice = false
     @Published var highlighted: String?
     @Published var hidden = 0
     /// False while the wheel is off screen, so its animations stop costing anything.
@@ -323,6 +465,16 @@ final class RingModel: ObservableObject {
     var outerRadius: CGFloat = 250
 
     func layout(_ agents: [AgentInfo]) {
+        if heldNotice { return }
+        looking = herdr == .unknown && agents.isEmpty
+        switch herdr {
+        case .notInstalled: notice = .notInstalled
+        case .notRunning: notice = .notRunning
+        case .running: notice = agents.isEmpty ? .empty : nil
+        case .unknown: notice = nil
+        }
+        // Without herdr-core there is nothing true to show, so don't leave old wedges up.
+        let agents = (herdr == .notInstalled || herdr == .notRunning) ? [] : agents
         let urgent = agents.filter { $0.needsYou }
         let rest = agents.filter { !$0.needsYou }
         hidden = max(0, rest.count - 12)
@@ -391,10 +543,14 @@ struct RingView: View {
                 Circle()
                     .fill(RadialGradient(colors: [Color.black.opacity(0.50), Color.black.opacity(0.30), .clear],
                                          center: .center, startRadius: 40, endRadius: model.outerRadius + 90))
-                ForEach(model.slices) { s in
-                    slice(s, on: model.highlighted == s.id, t: t)
+                if let notice = model.notice {
+                    noticeCard(notice)
+                } else {
+                    ForEach(model.slices) { s in
+                        slice(s, on: model.highlighted == s.id, t: t)
+                    }
+                    hub
                 }
-                hub
                 if let b = model.bubble, let a = model.slices.first(where: { $0.id == model.highlighted })?.agent {
                     SpeechBubble(agent: a, bubble: b, model: model)
                         .offset(x: b.offset.width, y: b.offset.height)
@@ -404,6 +560,46 @@ struct RingView: View {
             .frame(width: Self.side, height: Self.side)
         }
         .animation(.spring(response: 0.22, dampingFraction: 0.72), value: model.highlighted)
+        .animation(.easeOut(duration: 0.18), value: model.notice)
+    }
+
+    // MARK: Notice
+
+    /// The wheel with nothing in it: an empty track where the wedges go, and the reason in the middle.
+    private func noticeCard(_ n: RingModel.Notice) -> some View {
+        let track: CGFloat = 196
+        return ZStack {
+            Circle().stroke(Color(white: 0.13).opacity(0.9), lineWidth: 34).frame(width: track * 2, height: track * 2)
+            Circle().stroke(Color.white.opacity(0.14), style: StrokeStyle(lineWidth: 1.5, dash: [3, 9]))
+                .frame(width: track * 2, height: track * 2)
+            VStack(spacing: 7) {
+                Image(systemName: n.symbol)
+                    .font(.system(size: 24, weight: .semibold))
+                    .foregroundStyle(n.tint)
+                    .frame(width: 52, height: 52)
+                    .background(Circle().fill(Color.white.opacity(0.08)))
+                    .overlay(Circle().stroke(n.tint.opacity(0.55), lineWidth: 1.5))
+                    .padding(.bottom, 3)
+                Text(n.title)
+                    .font(.system(size: 17, weight: .bold, design: .rounded))
+                    .multilineTextAlignment(.center)
+                Text(n.detail)
+                    .font(.system(size: 12, weight: .medium, design: .rounded))
+                    .lineSpacing(2).opacity(0.78)
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
+                Text("Click anywhere to close")
+                    .font(.system(size: 10, weight: .medium)).opacity(0.45).padding(.top, 5)
+            }
+            .foregroundStyle(.white)
+            .padding(.horizontal, 20).padding(.vertical, 18)
+            .frame(width: 264)
+            .background(RoundedRectangle(cornerRadius: 26, style: .continuous)
+                .fill(RadialGradient(colors: [Color(white: 0.22), Color(white: 0.08)], center: .top, startRadius: 4, endRadius: 260)))
+            .overlay(RoundedRectangle(cornerRadius: 26, style: .continuous).stroke(Color.white.opacity(0.22), lineWidth: 1.5))
+            .shadow(color: .black.opacity(0.5), radius: 12)
+        }
+        .transition(.scale(scale: 0.9).combined(with: .opacity))
     }
 
     // MARK: Wedges
@@ -483,12 +679,13 @@ struct RingView: View {
         let focus = model.slices.first { $0.id == model.highlighted }?.agent
         return VStack(spacing: 1) {
             if model.slices.isEmpty {
-                Text("No agents").font(.system(size: 13, weight: .semibold))
-                Text("running").font(.system(size: 11)).opacity(0.7)
+                // Only seen for a moment: before herdr-core has answered for the first time.
+                Text(model.looking ? "Looking for" : "No agents").font(.system(size: 13, weight: .semibold))
+                Text(model.looking ? "agents…" : "running").font(.system(size: 11)).opacity(0.7)
             } else if let focus {
                 Text(focus.statusWord).font(.system(size: 13, weight: .bold, design: .rounded)).foregroundStyle(focus.needsYou ? Palette.accent : focus.color)
                 Text(focus.agent).font(.system(size: 10.5)).opacity(0.75).lineLimit(1)
-                Text("click to open").font(.system(size: 9.5)).opacity(0.5)
+                Text(model.canJump ? "click to open" : "no Herdr app").font(.system(size: 9.5)).opacity(0.5)
             } else if waiting > 0 {
                 Text("\(waiting)").font(.system(size: 26, weight: .bold, design: .rounded)).foregroundStyle(Palette.accent)
                 Text(waiting == 1 ? "needs you" : "need you").font(.system(size: 10.5)).opacity(0.8)
@@ -680,7 +877,10 @@ final class AgentRing {
 
     var isOpen: Bool { timer != nil }
 
-    func show(_ agents: [AgentInfo]) {
+    func show(_ agents: [AgentInfo], herdr: HerdrStatus, appInstalled: Bool) {
+        model.herdr = herdr
+        model.canJump = appInstalled
+        model.heldNotice = false
         model.highlighted = nil
         pointerOnWheel = false
         pointerOnBubble = false
@@ -727,8 +927,10 @@ final class AgentRing {
     }
 
     /// New data arrived while the ring is open.
-    func update(_ agents: [AgentInfo]) {
+    func update(_ agents: [AgentInfo], herdr: HerdrStatus, appInstalled: Bool) {
         guard isOpen else { return }
+        model.herdr = herdr
+        model.canJump = appInstalled
         model.layout(agents)
         placeBubble()
     }
@@ -766,7 +968,8 @@ final class AgentRing {
         }
         pointerOnBubble = overBubble
         pointerOnWheel = r <= model.outerRadius + 22 && model.target(for: rel) != nil
-        if !overBubble && r > model.outerRadius + 330 { close(); return }
+        // A notice is small, so it lets go sooner than a wheel with bubbles around it.
+        if !overBubble && r > (model.notice != nil ? 300 : model.outerRadius + 330) { close(); return }
 
         // Which wedge is aimed at only changes while the pointer is on the wheel itself,
         // so travelling out to the bubble keeps that agent selected.
@@ -830,6 +1033,8 @@ final class AgentRing {
 
     /// Pick whatever is aimed at (or just close when nothing is).
     func choose() {
+        // A notice has nothing to pick: any click or tap just closes it.
+        if model.notice != nil { close(); return }
         let picked = model.slices.first { $0.id == model.highlighted }?.agent
         // On an answer button: send that answer and stay open for the next question.
         if let option = model.hoveredOption, let picked, picked.needsYou {
@@ -850,6 +1055,19 @@ final class AgentRing {
         }
         // A click on the bubble itself (not on a button) does nothing.
         if pointerOnBubble && !pointerOnWheel { return }
+        // Without the Herdr app there is nowhere to jump to; say so rather than closing on a click that did nothing.
+        if pointerOnWheel, let picked, !model.canJump {
+            Log.write("agents: can't jump to \(picked.id), the Herdr app is not installed")
+            model.highlighted = nil
+            model.bubble = nil
+            model.hoveredOption = nil
+            model.slices = []
+            model.notice = .noApp
+            model.heldNotice = true
+            pointerOnWheel = false
+            pointerOnBubble = false
+            return
+        }
         close()
         // Only a click on a wedge opens that agent; clicking anywhere else just dismisses the wheel.
         if pointerOnWheel, let picked { onChoose?(picked) }

@@ -33,11 +33,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     func applicationDidFinishLaunching(_ note: Notification) {
         let args = CommandLine.arguments
 
+        // Developer aid: say what the Herdr check finds, using the same code as the running app.
+        // MIGHTYMOUSE_HC and MIGHTYMOUSE_HERDR_APP point it at other (or missing) commands.
+        if args.contains("--herdr-status") {
+            let started = Date()
+            let found = AgentWatcher.look(details: false)
+            print("herdr-core: \(found.status.summary)")
+            print("Herdr app: \(AgentWatcher.herdrAppInstalled() ? "installed" : "not installed")")
+            print(String(format: "took %.1f seconds", Date().timeIntervalSince(started)))
+            exit(0)
+        }
+
+        // Developer aid: `--state not-installed|not-running|empty|unknown` and `--no-app` force
+        // what the snapshots below believe about Herdr.
+        var forced: HerdrStatus?
+        if let i = args.firstIndex(of: "--state"), i + 1 < args.count {
+            guard let s = HerdrStatus(flag: args[i + 1]) else {
+                print("unknown --state \(args[i + 1]); use not-installed, not-running, empty or unknown")
+                exit(2)
+            }
+            forced = s
+        }
+
         // Developer aid: draw the agent ring to a PNG with sample or live agents.
         if let i = args.firstIndex(of: "--snapshot-ring"), i + 1 < args.count {
             let model = RingModel()
+            model.canJump = !args.contains("--no-app")
             var list: [AgentInfo] = []
-            if args.contains("--live"), let hc = AgentWatcher.tool("hc") {
+            if let forced {
+                model.herdr = forced
+            } else if args.contains("--live"), let hc = AgentWatcher.tool("hc") {
                 let p = Process(); p.executableURL = URL(fileURLWithPath: hc); p.arguments = ["ls", "--json"]
                 let out = Pipe(); p.standardOutput = out; try? p.run()
                 list = AgentWatcher.parse(out.fileHandleForReading.readDataToEndOfFile())
@@ -51,7 +76,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                     ["address": "t\(i)", "agent": "claude-code", "status": s.0, "where": "\(s.1) / \(s.2)"]
                 }]))
             }
-            if args.contains("--live"), let hc = AgentWatcher.tool("hc") {
+            if forced != nil {
+                // Nothing to fill in: these states have no agents.
+            } else if args.contains("--live"), let hc = AgentWatcher.tool("hc") {
                 list = list.map { a in
                     var a = a
                     let p = Process(); p.executableURL = URL(fileURLWithPath: hc); p.arguments = ["get", a.id, "--json"]
@@ -82,9 +109,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 print("parsed hints:", list[0].hints.keys.sorted(), "type option:", list[0].typeOption ?? -1)
                 list[0].message = "answer: Question 4: Refunds over $500 currently go through in one step. Finance flagged three cases last quarter where a refund was issued twice because the first attempt timed out and the agent retried it. A second approver would catch those, but it adds a delay of up to a day for customers in regions where the approver is offline, and support has asked that we do not slow down the common case. Should refunds over $500 need a second approver, or keep the single-step flow we have today? (Second approver (Recommended) · Keep single step · Decide per region)"
             }
+            if forced == nil { model.herdr = .running(agents: list.count) }
             model.layout(list)
             model.highlighted = model.slices.first?.id
-            if let s = model.slices.first {
+            if args.contains("--clicked"), !model.canJump {
+                // What a click on a wedge leaves behind when the Herdr app is missing.
+                model.slices = []
+                model.highlighted = nil
+                model.notice = .noApp
+            } else if args.contains("--plain") {
+                model.highlighted = model.slices.dropFirst(2).first?.id
+            } else if let s = model.slices.first {
                 let big = args.contains("--expanded")
                 let m = RingModel.bubbleMetrics(for: s.agent, expanded: big)
                 let dx = CGFloat(cos(s.mid)), dy = CGFloat(sin(s.mid))
@@ -113,6 +148,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                     return
                 }
                 state.use(profile)
+            }
+            if forced != nil || args.contains("--no-app") {
+                state.agents.pinned = (forced ?? .running(agents: 3), !args.contains("--no-app"))
+                state.herdr = state.agents.status
+                state.herdrApp = state.agents.appInstalled
             }
             snapshot(to: args[i + 1], dark: args.contains("--dark"), slot: args.contains("--gesture") ? .gesture : nil)
             NSApp.terminate(nil)
