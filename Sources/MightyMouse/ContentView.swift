@@ -331,11 +331,9 @@ struct ExtrasView: View {
                     .font(.system(size: 11.5)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 Toggle("Feel when an agent needs me or finishes", isOn: $state.feelAgents)
                     .font(.system(size: 13, weight: .medium)).disabled(!state.hapticsOn)
-                if !state.agentsAvailable {
-                    Label("Needs herdr-core (the hc command) installed.", systemImage: "info.circle")
-                        .font(.system(size: 11.5)).foregroundStyle(Palette.accent)
-                }
+                herdrStatus
             }
+            .onAppear { state.checkHerdr() }
 
             Divider()
             VStack(alignment: .leading, spacing: 4) {
@@ -347,6 +345,47 @@ struct ExtrasView: View {
         .toggleStyle(.switch).controlSize(.small)
         .padding(18)
         .frame(width: 340)
+    }
+
+    /// Whether the two parts of Herdr the agent features rely on are there, and what to do if not.
+    private var herdrStatus: some View {
+        let green = Color(red: 0.30, green: 0.80, blue: 0.47), grey = Color(white: 0.6)
+        let core: Color = state.herdr.isRunning ? green : (state.herdr == .notRunning ? Palette.accent : grey)
+        return VStack(alignment: .leading, spacing: 5) {
+            herdrRow("herdr-core", state.herdr.summary, core)
+            herdrRow("Herdr app", state.herdrApp ? "installed" : "not installed", state.herdrApp ? green : grey)
+            if let advice = herdrAdvice {
+                Text(advice).font(.system(size: 11.5)).foregroundStyle(.secondary).tint(Palette.accent)
+                    .fixedSize(horizontal: false, vertical: true).padding(.top, 1)
+            }
+        }
+        .padding(.horizontal, 10).padding(.vertical, 8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color.primary.opacity(0.05)))
+        .padding(.top, 2)
+    }
+
+    private func herdrRow(_ name: String, _ value: String, _ dot: Color) -> some View {
+        HStack(spacing: 7) {
+            Circle().fill(dot).frame(width: 8, height: 8)
+            Text(name).font(.system(size: 12, weight: .medium))
+            Spacer()
+            Text(value).font(.system(size: 11.5)).foregroundStyle(.secondary)
+        }
+    }
+
+    /// One short line about the first thing that is missing, or nothing when all is well.
+    private var herdrAdvice: AttributedString? {
+        let text: String
+        switch state.herdr {
+        case .notInstalled: text = "The agent ring and agent haptics need Herdr, which runs your coding agents. Get it at [herdr.dev](https://herdr.dev); no restart needed."
+        case .notRunning: text = "herdr-core is installed but didn't answer. Start it with “hc\u{00A0}server\u{00A0}start”."
+        case .unknown: return nil
+        case .running:
+            if state.herdrApp { return nil }
+            text = "You can see and answer agents, but jumping to one needs the Herdr app from [herdr.dev](https://herdr.dev)."
+        }
+        return try? AttributedString(markdown: text)
     }
 }
 

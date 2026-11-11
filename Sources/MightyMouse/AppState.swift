@@ -164,7 +164,9 @@ final class AppState: ObservableObject {
     @Published var feelAgents = UserDefaults.standard.object(forKey: "feelAgents") as? Bool ?? true {
         didSet { UserDefaults.standard.set(feelAgents, forKey: "feelAgents") }
     }
-    @Published var agentsAvailable = false
+    /// Whether herdr-core and the Herdr app are there; both are optional and re-checked as the app runs.
+    @Published var herdr = HerdrStatus.unknown
+    @Published var herdrApp = true
     @Published var snapWindows = UserDefaults.standard.object(forKey: "snapWindows") as? Bool ?? true {
         didSet { UserDefaults.standard.set(snapWindows, forKey: "snapWindows"); applyFeel() }
     }
@@ -183,6 +185,7 @@ final class AppState: ObservableObject {
     private var ringPress = false
     private var ringTimer: Timer?
     private var ringFetching = false
+    private var agentsFetching = false
     private var dragStartMouse = CGPoint.zero
     private var wheelAcc = 0.0
     private var wheelLast = Date.distantPast
@@ -262,7 +265,7 @@ final class AppState: ObservableObject {
             self.buzz(.tick)
         }
         if accessibilityOK { tap.start() }
-        agentsAvailable = agents.isAvailable
+        watchAgents()
         ring.onAim = { [weak self] in self?.buzz(.tick) }
         ring.onChoose = { [weak self] agent in self?.agents.focus(agent) }
         ring.onType = { [weak self] agent, spot in
@@ -363,10 +366,17 @@ final class AppState: ObservableObject {
     // MARK: Agents
 
     /// Notice agents that start waiting on you or finish, and say so through the thumb pad.
+    /// This is also what notices Herdr being installed, started or stopped while MightyMouse runs.
     private func watchAgents() {
-        guard agentsAvailable, (feelAgents && hapticsOn && hapticsAvailable) || ring.isOpen else { return }
+        // Nothing to ask for when neither agent feature is in use.
+        guard ringOnTap || (feelAgents && hapticsOn && hapticsAvailable) || ring.isOpen else { return }
+        // One question at a time, so a herdr-core that is slow to answer can't build up a queue.
+        guard !agentsFetching else { return }
+        agentsFetching = true
         agents.fetch { [weak self] list in
             guard let self else { return }
+            self.agentsFetching = false
+            self.noteHerdr()
             var next: [String: String] = [:]
             var nowWaiting = false, nowDone = false
             for a in list {
@@ -383,8 +393,19 @@ final class AppState: ObservableObject {
         }
     }
 
+    /// Copy what the last fetch learned about Herdr to where the window can see it.
+    private func noteHerdr() {
+        if herdr != agents.status { herdr = agents.status }
+        if herdrApp != agents.appInstalled { herdrApp = agents.appInstalled }
+    }
+
+    /// Look again now; the settings popover asks for this when it opens.
+    func checkHerdr() {
+        agents.fetch { [weak self] _ in self?.noteHerdr() }
+    }
+
     private func openRing() {
-        ring.show(agents.latest)
+        ring.show(agents.latest, herdr: agents.status, appInstalled: agents.appInstalled)
         refreshRing()
         // Keep the wheel live while it is showing: agents change state, ask new questions, finish.
         ringTimer?.invalidate()
@@ -400,8 +421,10 @@ final class AppState: ObservableObject {
         guard !ringFetching else { return }
         ringFetching = true
         agents.fetch(details: true) { [weak self] list in
-            self?.ringFetching = false
-            self?.ring.update(list)
+            guard let self else { return }
+            self.ringFetching = false
+            self.noteHerdr()
+            self.ring.update(list, herdr: self.agents.status, appInstalled: self.agents.appInstalled)
         }
     }
 
@@ -550,7 +573,8 @@ final class AppState: ObservableObject {
         let moved = hypot(now.x - dragStartMouse.x, now.y - dragStartMouse.y)
         let quick = Date().timeIntervalSince(dragPressed) < 0.30 && moved < 6
         dragger.end(snap: !quick)
-        if quick && ringOnTap && agentsAvailable { openRing() }
+        // The wheel opens even without Herdr, to say what is missing rather than do nothing.
+        if quick && ringOnTap { openRing() }
     }
 
     private func gestureDown() {
