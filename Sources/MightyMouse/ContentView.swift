@@ -15,8 +15,8 @@ struct ContentView: View {
                 Spacer(minLength: 0)
                 MouseView(state: state)
                     .scaleEffect(setupShowing ? 0.84 : 1)
-                    .frame(width: MouseArt.size.width * (setupShowing ? 0.84 : 1),
-                           height: MouseArt.size.height * (setupShowing ? 0.84 : 1))
+                    .frame(width: state.profile.art.size.width * (setupShowing ? 0.84 : 1),
+                           height: state.profile.art.size.height * (setupShowing ? 0.84 : 1))
                 Spacer(minLength: 0)
                 footer
             }
@@ -99,7 +99,7 @@ struct ContentView: View {
                     action: state.requestAccessibility)
                 permissionRow(
                     ok: state.inputMonitoringOK, title: "Input Monitoring",
-                    why: "Lets MightyMouse feel when the haptic panel and top button are held and released. If MightyMouse isn't in the list, click + there and pick it from Applications.",
+                    why: state.profile.directLinkWhy + " If MightyMouse isn't in the list, click + there and pick it from Applications.",
                     action: state.requestInputMonitoring)
             }
         }
@@ -151,31 +151,32 @@ struct DetailPanel: View {
     @ObservedObject var state: AppState
 
     private var slot: Slot { state.editing }
+    private var control: MouseControl? { state.profile.control(state.selected) }
     private var current: Action { state.action(slot) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             VStack(alignment: .leading, spacing: 6) {
-                Text(state.selected.title).font(.system(size: 18, weight: .bold, design: .rounded))
-                Text(state.selected.blurb).font(.system(size: 12)).foregroundStyle(.secondary)
+                Text(control?.title ?? "").font(.system(size: 18, weight: .bold, design: .rounded))
+                Text(control?.blurb ?? "").font(.system(size: 12)).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
                 if !state.available.contains(state.selected) {
                     Label(unavailableText, systemImage: "info.circle")
                         .font(.system(size: 11.5)).foregroundStyle(Palette.accent)
                         .fixedSize(horizontal: false, vertical: true)
                         .padding(.top, 2)
-                    if state.selected == .modeShift && state.accessibilityOK && state.hidStatus != .connected {
+                    if needsDirectLink && state.accessibilityOK && state.hidStatus != .connected {
                         Button("Open Input Monitoring settings…") { state.requestInputMonitoring() }
                             .controlSize(.small).padding(.top, 2)
                     }
                 }
-                if state.selected == .gesture {
+                if state.hasGestures(state.selected) {
                     Picker("", selection: $state.gesturePart) {
                         ForEach(Slot.gestureParts) { p in Text(p.partLabel).tag(p) }
                     }
                     .pickerStyle(.segmented).labelsHidden().padding(.top, 6)
                     if slot.isSwipe {
-                        Text(slot.title).font(.system(size: 11.5, weight: .medium)).foregroundStyle(.secondary)
+                        Text(slot.swipeTitle).font(.system(size: 11.5, weight: .medium)).foregroundStyle(.secondary)
                     }
                 }
             }
@@ -228,6 +229,12 @@ struct DetailPanel: View {
         }
     }
 
+    /// The selected control reaches us only over the direct (HID++) link.
+    private var needsDirectLink: Bool {
+        if case .hidpp = control?.source { return true }
+        return false
+    }
+
     private var unavailableText: String {
         if !state.accessibilityOK { return "Works once Accessibility is allowed (see the left side)." }
         if state.hidStatus != .connected {
@@ -246,7 +253,7 @@ struct DetailPanel: View {
     private func allowed(_ p: Preset) -> Bool {
         switch p.id {
         case "default": return !slot.isSwipe
-        case "dragWindow": return !Slot.gestureParts.contains(slot)
+        case "dragWindow": return !slot.isSwipe && !state.hasGestures(slot)
         case "middleClick": return slot != .middle
         default: return true
         }
@@ -353,6 +360,10 @@ struct ExtrasView: View {
 // MARK: - App icon artwork
 
 struct IconView: View {
+    // The icon is always the MX Master 4, whatever mouse is connected.
+    private let art = MouseProfile.mxMaster4.art
+    private let wheel = MouseProfile.mxMaster4.control(.middle)?.rect ?? .zero
+
     var body: some View {
         ZStack {
             RoundedRectangle(cornerRadius: 185, style: .continuous)
@@ -362,14 +373,14 @@ struct IconView: View {
                 .frame(width: 824, height: 824)
                 .shadow(color: .black.opacity(0.25), radius: 18, y: 10)
             ZStack(alignment: .topLeading) {
-                MouseArt.wing.fill(Color.white.opacity(0.78))
-                MouseArt.body.fill(Color.white)
-                MouseArt.seams.stroke(Color(red: 0.98, green: 0.4, blue: 0.36).opacity(0.55), style: StrokeStyle(lineWidth: 4, lineCap: .round))
+                if let wing = art.wing { wing.fill(Color.white.opacity(0.78)) }
+                art.body.fill(Color.white)
+                art.seams.stroke(Color(red: 0.98, green: 0.4, blue: 0.36).opacity(0.55), style: StrokeStyle(lineWidth: 4, lineCap: .round))
                 Capsule().fill(Color(red: 0.98, green: 0.4, blue: 0.36))
-                    .frame(width: MouseArt.wheel.width, height: MouseArt.wheel.height)
-                    .position(x: MouseArt.wheel.midX, y: MouseArt.wheel.midY)
+                    .frame(width: wheel.width, height: wheel.height)
+                    .position(x: wheel.midX, y: wheel.midY)
             }
-            .frame(width: MouseArt.size.width, height: MouseArt.size.height)
+            .frame(width: art.size.width, height: art.size.height)
             .offset(x: 12, y: -6)
             .scaleEffect(1.32)
         }

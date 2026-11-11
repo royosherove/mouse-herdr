@@ -31,7 +31,7 @@ enum Log {
     }
 }
 
-// MARK: - Slots (things on the mouse you can assign)
+// MARK: - Slots (things on a mouse you can assign; which ones a mouse has is in its MouseProfile)
 
 enum Slot: String, CaseIterable, Codable, Identifiable {
     case middle, modeShift, gesture, forward, back, thumbPanel, thumbWheel
@@ -39,37 +39,19 @@ enum Slot: String, CaseIterable, Codable, Identifiable {
 
     var id: String { rawValue }
 
-    /// The physical buttons shown on the mouse picture.
-    static let buttons: [Slot] = [.middle, .modeShift, .thumbWheel, .gesture, .forward, .back, .thumbPanel]
-    static let gestureParts: [Slot] = [.gesture, .gestureUp, .gestureDown, .gestureLeft, .gestureRight]
+    /// The parts of a control that has gestures; `.gesture` stands for its plain click.
+    static let gestureParts: [Slot] = [.gesture] + swipes
+    static let swipes: [Slot] = [.gestureUp, .gestureDown, .gestureLeft, .gestureRight]
 
-    var isSwipe: Bool { [.gestureUp, .gestureDown, .gestureLeft, .gestureRight].contains(self) }
+    var isSwipe: Bool { Slot.swipes.contains(self) }
 
-    var title: String {
+    /// Name of a hold-and-move direction. The controls themselves are named by the mouse's profile.
+    var swipeTitle: String {
         switch self {
-        case .middle: return "Wheel click"
-        case .modeShift: return "Top button"
-        case .gesture: return "Gesture button"
-        case .forward: return "Forward button"
-        case .back: return "Back button"
-        case .thumbPanel: return "Haptic panel"
-        case .thumbWheel: return "Thumb wheel"
         case .gestureUp: return "Hold + move up"
         case .gestureDown: return "Hold + move down"
         case .gestureLeft: return "Hold + move left"
         case .gestureRight: return "Hold + move right"
-        }
-    }
-
-    var blurb: String {
-        switch self {
-        case .middle: return "Pressing down on the scroll wheel."
-        case .modeShift: return "The small button behind the scroll wheel. Out of the box it switches the wheel between ratchet and free-spin."
-        case .gesture: return "The side button nearest the front. Click it, or hold it and move the mouse for four more actions."
-        case .forward: return "The front one of the two thumb buttons."
-        case .back: return "The rear one of the two thumb buttons."
-        case .thumbPanel: return "The pressable pad under your thumb. With “Drag the window”, point at any window, hold the pad and move the mouse; let go to drop it. A quick tap opens the agent ring."
-        case .thumbWheel: return "The little wheel by your thumb. Out of the box it scrolls sideways."
         default: return ""
         }
     }
@@ -250,21 +232,8 @@ enum ConfigStore {
         return dir.appendingPathComponent("config.json")
     }()
 
-    static let defaults: [Slot: Action] = [
-        .middle: .standard,
-        .modeShift: .standard,
-        .thumbPanel: Action(kind: "dragWindow"),
-        .thumbWheel: .standard,
-        .back: Action(kind: "back"),
-        .forward: Action(kind: "forward"),
-        .gesture: Action(kind: "missionControl"),
-        .gestureUp: Action(kind: "missionControl"),
-        .gestureDown: Action(kind: "appExpose"),
-        .gestureLeft: Action(kind: "spaceLeft"),
-        .gestureRight: Action(kind: "spaceRight"),
-    ]
-
-    static func load() -> [Slot: Action] {
+    /// Saved choices on top of the mouse's own defaults.
+    static func load(defaults: [Slot: Action]) -> [Slot: Action] {
         var result = defaults
         if let data = try? Data(contentsOf: url),
            let saved = try? JSONDecoder().decode([String: Action].self, from: data) {

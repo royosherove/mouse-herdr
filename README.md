@@ -53,8 +53,9 @@ Everything optional has a switch under **Haptics & extras** in the window.
 - Xcode command line tools (Swift 5.9 or later) to build
 - A Logitech MX Master 4 connected over **Bluetooth**
 
-The Logi Bolt USB receiver is not supported. Other Logitech mice may partly work but are
-untested; the mouse picture and button names are for the MX Master 4.
+The Logi Bolt USB receiver is not supported. Any other Logitech Bluetooth mouse is shown as a
+"Generic mouse" with only the wheel click, back and forward buttons, and is untested. See
+[Adding a mouse](#adding-a-mouse) to give one its own picture and buttons.
 
 ## Install
 
@@ -108,11 +109,44 @@ MightyMouse from Login Items and the two privacy lists in System Settings.
   plays the built-in haptic waveforms.
 - `ActionRunner.swift` watches the ordinary extra buttons and the thumb wheel with an event
   tap, and performs actions by posting key and media events.
-- `AppState.swift` ties buttons to actions and holds the window dragging and snapping.
+- `MouseProfile.swift` describes what a mouse is: its controls, where their presses come
+  from, its defaults and its picture. `Profiles/` has one file per mouse.
+- `AppState.swift` picks the profile for the connected mouse, ties its controls to actions and
+  holds the window dragging and snapping.
 - `Feel.swift` has the hover and window-edge detection and the snap preview.
 - `Agents.swift` reads agent state from `hc` (herdr-core), draws the wheel and speech
   bubble, and sends answers back with `hc keys` and `hc send`.
-- `MouseView.swift` and `ContentView.swift` are the SwiftUI window.
+- `MouseView.swift` and `ContentView.swift` are the SwiftUI window, drawn from the profile.
+
+## Adding a mouse
+
+Everything specific to one mouse lives in a `MouseProfile`. To add one:
+
+1. Copy `Sources/MightyMouse/Profiles/MXMaster4.swift` (or the smaller `Generic.swift`) to a
+   new file in the same folder and rename the static property, `id` and `name`.
+2. Say how to recognise it: `productIDs` (the HID product id; MightyMouse writes it to the log
+   as `found … (product id 0x….)` when the mouse connects) and/or `nameContains` (part of the
+   name the mouse reports).
+3. List its `controls`. Each one has:
+   - `slot`: the key its action is saved under. Reuse the existing `Slot` cases (`middle`,
+     `back`, `forward`, `gesture`, `modeShift`, `thumbPanel`, `thumbWheel`) so settings carry
+     over between mice.
+   - `title` and `blurb`: what the window calls it.
+   - `source`: `.button(n)` for a button macOS reports itself (2 wheel click, 3 back,
+     4 forward; the log shows the number of any button you press), `.hidpp(cid:)` for a
+     control only reachable over HID++, `.button(n, cid:)` if it is both, or `.thumbWheel`.
+     The log lists every control id the mouse reports as `control cid=0x….`.
+   - `gestures: true` on at most one control, for hold-and-move in four directions.
+   - `rect`, `shape`, `chip` and `chipOnLeft`: where it is on the picture, how it is drawn,
+     and where its label goes.
+4. Fill in `firstSelected`, `hasHaptics`, `defaults` (an action per slot), `directLinkWhy`
+   (the sentence shown next to the Input Monitoring permission) and `art`: the canvas size,
+   the body outline, an optional second shape behind it, the seam lines and the floor shadow.
+5. Add it to `MouseProfile.all` in `MouseProfile.swift`.
+
+Check the drawing without the mouse: `./build.sh`, then
+`dist/MightyMouse.app/Contents/MacOS/MightyMouse --snapshot /tmp/mouse.png --profile <id>`
+(add `--dark`, `--gesture` or `--wheel` for other views).
 
 ## Acknowledgements
 

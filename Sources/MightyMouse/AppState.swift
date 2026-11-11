@@ -131,8 +131,10 @@ final class WindowDragger {
 }
 
 final class AppState: ObservableObject {
-    @Published var assignments: [Slot: Action] = ConfigStore.load()
-    @Published var selected: Slot = .thumbPanel
+    /// The mouse we believe is connected: its controls, picture and defaults.
+    @Published private(set) var profile = MouseProfile.initial
+    @Published var assignments: [Slot: Action] = ConfigStore.load(defaults: MouseProfile.initial.defaults)
+    @Published var selected: Slot = MouseProfile.initial.firstSelected
     @Published var gesturePart: Slot = .gesture
     @Published var recording = false
 
@@ -195,6 +197,8 @@ final class AppState: ObservableObject {
     private var slotForCID: [UInt16: Slot] = [:]
     private var rawXYCapable: Set<UInt16> = []
     private var pressed: Set<UInt16> = []
+    private var hidHaptics = false      // the connected mouse offers the haptics feature
+    private var gestureSlot = Slot.gesture
     private var gestureHeld = false
     private var gestureFired = false
     private var gestureAcc = CGPoint.zero
@@ -204,11 +208,27 @@ final class AppState: ObservableObject {
     private var dragPressed = Date.distantPast
     private var gestureStart = CGPoint.zero
     private var gestureTimer: Timer?
-    /// Buttons macOS reports directly. 5 and 6 are the MX Master 4's extra side buttons.
-    private static let tapButtons: [Int: Slot] = [2: .middle, 3: .back, 4: .forward, 5: .gesture, 6: .thumbPanel]
+    /// Controls every Logitech mouse reports (left, right, middle, back, forward, virtual gesture button).
+    private static let standardCIDs: Set<UInt16> = [0x0050, 0x0051, 0x0052, 0x0053, 0x0056, 0x00D7]
 
     /// The slot the right-hand panel is editing.
-    var editing: Slot { selected == .gesture ? gesturePart : selected }
+    var editing: Slot { hasGestures(selected) && gesturePart.isSwipe ? gesturePart : selected }
+
+    func hasGestures(_ slot: Slot) -> Bool { profile.control(slot)?.gestures ?? false }
+
+    /// Switch to another mouse: its picture, controls and defaults.
+    func use(_ p: MouseProfile) {
+        guard p.id != profile.id else { return }
+        Log.write("profile: \(p.name)")
+        profile = p
+        assignments = ConfigStore.load(defaults: p.defaults)
+        if p.control(selected) == nil { selected = p.firstSelected }
+    }
+
+    /// The control behind a button number macOS reports.
+    private func control(forButton button: Int) -> MouseControl? {
+        profile.controls.first { $0.button == button }
+    }
 
     // MARK: Start
 
@@ -221,22 +241,23 @@ final class AppState: ObservableObject {
         }
 
         tap.onPress = { [weak self] button in
-            guard let self, let slot = Self.tapButtons[button] else {
+            guard let self, let control = self.control(forButton: button) else {
                 Log.write("unmapped mouse button \(button) pressed")
                 return false
             }
+            let slot = control.slot
             Log.write("mouse button \(button) pressed → \(slot.rawValue)")
             guard self.isRemapped(slot) else { return false }
-            // Without the direct connection the haptic panel only sends a short pulse, so it can't be "held".
-            self.press(slot, pulseOnly: slot == .thumbPanel)
+            // Without the direct connection some controls only send a short pulse, so they can't be "held".
+            self.press(slot, pulseOnly: control.pulsesOverTap)
             return true
         }
         tap.isMapped = { [weak self] button in
-            guard let self, let slot = Self.tapButtons[button] else { return false }
+            guard let self, let slot = self.control(forButton: button)?.slot else { return false }
             return self.isRemapped(slot)
         }
         tap.onRelease = { [weak self] button in
-            guard let self, let slot = Self.tapButtons[button] else { return }
+            guard let self, let slot = self.control(forButton: button)?.slot else { return }
             Log.write("mouse button \(button) released")
             self.release(slot)
         }
@@ -282,13 +303,18 @@ final class AppState: ObservableObject {
         hid.onStatus = { [weak self] s in
             guard let self else { return }
             self.hidStatus = s
-            if s != .connected { self.hapticsAvailable = false; self.applyFeel(); self.directLink = false; self.stickyDrag = false; self.pressed = []; self.cidForSlot = [:]; self.slotForCID = [:]; self.updateAvailability() }
+            if s != .connected { self.hidHaptics = false; self.hapticsAvailable = false; self.applyFeel(); self.directLink = false; self.stickyDrag = false; self.pressed = []; self.cidForSlot = [:]; self.slotForCID = [:]; self.updateAvailability() }
             if s == .connected { self.needsRelaunch = false }
         }
-        hid.onDevice = { [weak self] name, controls in self?.deviceReady(name, controls) }
+        hid.onDevice = { [weak self] name, productID, controls in self?.deviceReady(name, productID, controls) }
         hid.onButtons = { [weak self] cids in self?.buttons(cids) }
         hid.onRawXY = { [weak self] dx, dy in self?.rawXY(dx, dy) }
-        hid.onHaptics = { [weak self] ok in self?.hapticsAvailable = ok; self?.applyFeel() }
+        hid.onHaptics = { [weak self] ok in
+            guard let self else { return }
+            self.hidHaptics = ok
+            self.hapticsAvailable = ok && self.profile.hasHaptics
+            self.applyFeel()
+        }
         hid.onBattery = { [weak self] p, c in self?.battery = p; self?.charging = c }
         hid.start()
         updateAvailability()
@@ -422,7 +448,8 @@ final class AppState: ObservableObject {
 
     /// The thumb wheel was rolled. Returns true if we used the movement.
     private func thumbWheel(_ delta: Double) -> Bool {
-        let mode = action(.thumbWheel).kind
+        guard let wheel = profile.controls.first(where: { $0.source == .thumbWheel }) else { return false }
+        let mode = action(wheel.slot).kind
         let step: Double, pause: Double
         switch mode {
         case "wheelVolume": (step, pause) = (1.0, 0.0)
@@ -461,53 +488,61 @@ final class AppState: ObservableObject {
     }
 
     func resetAll() {
-        assignments = ConfigStore.defaults
+        assignments = profile.defaults
         ConfigStore.save(assignments)
         pushDiversions()
     }
 
     private func isRemapped(_ slot: Slot) -> Bool {
-        slot == .gesture ? gestureWanted : !action(slot).isDefault
+        hasGestures(slot) ? gestureWanted(slot) : !action(slot).isDefault
     }
 
-    private var gestureWanted: Bool {
-        !action(.gesture).isDefault
-            || [Slot.gestureUp, .gestureDown, .gestureLeft, .gestureRight].contains { !action($0).isNothing && !action($0).isDefault }
+    /// A gesture control is in use if its click or any of the four directions does something.
+    private func gestureWanted(_ slot: Slot) -> Bool {
+        !action(slot).isDefault || Slot.swipes.contains { !action($0).isNothing && !action($0).isDefault }
     }
 
     private func pushDiversions() {
         var diverts: [UInt16: Bool] = [:]
-        if let cid = cidForSlot[.gesture], gestureWanted { diverts[cid] = rawXYCapable.contains(cid) }
-        for slot in [Slot.modeShift, .thumbPanel] {
-            if let cid = cidForSlot[slot], !action(slot).isDefault { diverts[cid] = false }
+        for control in profile.controls {
+            guard let cid = cidForSlot[control.slot], isRemapped(control.slot) else { continue }
+            diverts[cid] = control.gestures && rawXYCapable.contains(cid)   // raw XY only where movement matters
         }
         hid.setDiversions(diverts, managed: Array(cidForSlot.values))
     }
 
     // MARK: Device
 
-    private func deviceReady(_ name: String, _ controls: [HIDPP.Control]) {
+    private func deviceReady(_ name: String, _ productID: Int, _ controls: [HIDPP.Control]) {
         deviceName = name
+        use(MouseProfile.matching(productID: productID, name: name))
+        let haptics = hidHaptics && profile.hasHaptics
+        if haptics != hapticsAvailable { hapticsAvailable = haptics; applyFeel() }
         cidForSlot = [:]
         rawXYCapable = Set(controls.filter { $0.rawXY }.map { $0.cid })
         let usable = controls.filter { $0.divertable && !$0.isVirtual }
         let ids = Set(usable.map { $0.cid })
-        if ids.contains(0x00C3) { cidForSlot[.gesture] = 0x00C3 }
-        if ids.contains(0x00C4) { cidForSlot[.modeShift] = 0x00C4 }
-        // The haptic panel is whichever capturable control is left once the well-known ones are accounted for.
-        let known: Set<UInt16> = [0x0050, 0x0051, 0x0052, 0x0053, 0x0056, 0x00C3, 0x00C4, 0x00D7]
-        let extras = usable.filter { !known.contains($0.cid) }
-        if let panel = extras.first(where: { $0.cid == 0x01A0 }) ?? extras.first { cidForSlot[.thumbPanel] = panel.cid }
-        slotForCID = Dictionary(uniqueKeysWithValues: cidForSlot.map { ($0.value, $0.key) })
+        for control in profile.controls {
+            if let cid = control.cid, ids.contains(cid) { cidForSlot[control.slot] = cid }
+        }
+        // A control that asked for it gets whichever capturable control is left once the known ones are accounted for.
+        let known = Self.standardCIDs.union(profile.controls.compactMap { $0.cid })
+        if let orphan = profile.controls.first(where: { $0.orAnyUnlistedControl && cidForSlot[$0.slot] == nil }),
+           let extra = usable.first(where: { !known.contains($0.cid) }) {
+            cidForSlot[orphan.slot] = extra.cid
+        }
+        slotForCID = Dictionary(cidForSlot.map { ($0.value, $0.key) }, uniquingKeysWith: { a, _ in a })
         Log.write("slots: " + cidForSlot.map { "\($0.key.rawValue)=\(String(format: "0x%04x", $0.value))" }.sorted().joined(separator: " "))
         updateAvailability()
         pushDiversions()
-        directLink = cidForSlot[.thumbPanel] != nil
+        directLink = profile.controls.contains { $0.pulsesOverTap && cidForSlot[$0.slot] != nil }
     }
 
     private func updateAvailability() {
         var s = Set<Slot>()
-        if tap.isRunning { s.formUnion([.middle, .back, .forward, .gesture, .thumbPanel, .thumbWheel]) }
+        if tap.isRunning {
+            s.formUnion(profile.controls.filter { $0.button != nil || $0.source == .thumbWheel }.map { $0.slot })
+        }
         if hidStatus == .connected && accessibilityOK { s.formUnion(cidForSlot.keys) }
         available = s
     }
@@ -516,7 +551,7 @@ final class AppState: ObservableObject {
 
     private func press(_ slot: Slot, pulseOnly: Bool = false) {
         pulseSource = pulseOnly
-        if slot == .gesture { gestureDown(); return }
+        if hasGestures(slot) { gestureDown(slot); return }
         let a = action(slot)
         guard a.isDrag else { ActionRunner.run(a); return }
         if ring.isOpen {                // pressing the pad again picks from the ring
@@ -534,7 +569,7 @@ final class AppState: ObservableObject {
     }
 
     private func release(_ slot: Slot) {
-        if slot == .gesture { gestureUp(); return }
+        if hasGestures(slot) { gestureUp(); return }
         guard action(slot).isDrag else { return }
         if ringPress { ringPress = false; ring.choose(); return }
         guard !stickyDrag else { return }
@@ -553,7 +588,8 @@ final class AppState: ObservableObject {
         if quick && ringOnTap && agentsAvailable { openRing() }
     }
 
-    private func gestureDown() {
+    private func gestureDown(_ slot: Slot) {
+        gestureSlot = slot
         gestureHeld = true; gestureFired = false; gestureAcc = .zero
         gestureStart = CGEvent(source: nil)?.location ?? .zero
         gestureTimer?.invalidate()
@@ -570,7 +606,7 @@ final class AppState: ObservableObject {
         gestureTimer?.invalidate(); gestureTimer = nil
         guard gestureHeld else { return }
         gestureHeld = false
-        if !gestureFired { ActionRunner.run(action(.gesture)) }
+        if !gestureFired { ActionRunner.run(action(gestureSlot)) }
     }
 
     private func swipe(_ dx: CGFloat, _ dy: CGFloat, threshold: CGFloat) {

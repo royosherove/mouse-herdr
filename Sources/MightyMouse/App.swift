@@ -105,7 +105,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
         // Developer aid: draw the window to a PNG without touching the mouse.
         if let i = args.firstIndex(of: "--snapshot"), i + 1 < args.count {
-            snapshot(to: args[i + 1], dark: args.contains("--dark"), slot: args.contains("--gesture") ? .gesture : .thumbPanel)
+            // "--profile generic" draws another mouse's profile instead of the MX Master 4.
+            if let j = args.firstIndex(of: "--profile"), j + 1 < args.count {
+                guard let profile = MouseProfile.named(args[j + 1]) else {
+                    print("unknown profile \(args[j + 1]); known: \((MouseProfile.all + [.generic]).map { $0.id }.joined(separator: ", "))")
+                    NSApp.terminate(nil)
+                    return
+                }
+                state.use(profile)
+            }
+            snapshot(to: args[i + 1], dark: args.contains("--dark"), slot: args.contains("--gesture") ? .gesture : nil)
             NSApp.terminate(nil)
             return
         }
@@ -247,18 +256,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     // MARK: Snapshot
 
-    private func snapshot(to path: String, dark: Bool, slot: Slot) {
-        state.deviceName = "MX Master 4"
+    private func snapshot(to path: String, dark: Bool, slot: Slot?) {
+        state.deviceName = state.profile.name
         state.hidStatus = .connected
         state.battery = 85
         state.accessibilityOK = !CommandLine.arguments.contains("--needs-setup")
         state.inputMonitoringOK = state.accessibilityOK
         state.launchAtLogin = true
-        state.available = Set(Slot.buttons)
-        state.selected = slot
-        state.hapticsAvailable = true
+        state.available = Set(state.profile.controls.map { $0.slot })
+        state.hapticsAvailable = state.profile.hasHaptics
         let extras = CommandLine.arguments.contains("--extras")
-        if CommandLine.arguments.contains("--wheel") { state.selected = .thumbWheel }
+        // Only select what this mouse has.
+        let wanted = CommandLine.arguments.contains("--wheel") ? .thumbWheel : slot ?? state.profile.firstSelected
+        if state.profile.control(wanted) != nil { state.selected = wanted }
         let host: NSView = extras
             ? NSHostingView(rootView: ExtrasView(state: state))
             : NSHostingView(rootView: ContentView(state: state))

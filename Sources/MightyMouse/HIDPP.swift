@@ -19,7 +19,7 @@ final class HIDPP {
 
     // All callbacks are delivered on the main thread.
     var onStatus: ((Status) -> Void)?
-    var onDevice: ((String, [Control]) -> Void)?
+    var onDevice: ((String, Int, [Control]) -> Void)?   // name, HID product id, controls
     var onButtons: ((Set<UInt16>) -> Void)?
     var onRawXY: ((Int, Int) -> Void)?
     var onBattery: ((Int, Bool) -> Void)?
@@ -181,8 +181,9 @@ final class HIDPP {
     private func attach(_ dev: IOHIDDevice) {
         guard device == nil else { return }
         let product = IOHIDDeviceGetProperty(dev, kIOHIDProductKey as CFString) as? String ?? "Logitech mouse"
+        let productID = IOHIDDeviceGetProperty(dev, kIOHIDProductIDKey as CFString) as? Int ?? 0
         let open = IOHIDDeviceOpen(dev, IOOptionBits(kIOHIDOptionsTypeNone))
-        Log.write("found \(product), open: \(hex(open))")
+        Log.write("found \(product) (product id \(String(format: "0x%04x", productID))), open: \(hex(open))")
         guard open == kIOReturnSuccess else {
             let status: Status = (open == kIOReturnNotPermitted) ? .notPermitted : .failed
             main { self.onStatus?(status) }
@@ -232,7 +233,7 @@ final class HIDPP {
         }
         main {
             self.onStatus?(.connected)
-            self.onDevice?(name, controls)
+            self.onDevice?(name, productID, controls)
         }
         readBattery()
         applyDiversions()

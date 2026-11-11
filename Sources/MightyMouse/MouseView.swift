@@ -5,77 +5,7 @@ enum Palette {
     static let accentSoft = Color(red: 1.0, green: 0.47, blue: 0.33).opacity(0.16)
 }
 
-/// Geometry of the stylised MX Master 4, in a 660 × 520 canvas (nose pointing up).
-enum MouseArt {
-    static let size = CGSize(width: 660, height: 520)
-
-    static var body: Path {
-        var p = Path()
-        p.move(to: CGPoint(x: 350, y: 40))
-        p.addCurve(to: CGPoint(x: 438, y: 150), control1: CGPoint(x: 400, y: 40), control2: CGPoint(x: 432, y: 90))
-        p.addCurve(to: CGPoint(x: 440, y: 340), control1: CGPoint(x: 444, y: 210), control2: CGPoint(x: 446, y: 280))
-        p.addCurve(to: CGPoint(x: 345, y: 492), control1: CGPoint(x: 432, y: 430), control2: CGPoint(x: 400, y: 492))
-        p.addCurve(to: CGPoint(x: 258, y: 380), control1: CGPoint(x: 295, y: 492), control2: CGPoint(x: 262, y: 440))
-        p.addCurve(to: CGPoint(x: 262, y: 150), control1: CGPoint(x: 254, y: 300), control2: CGPoint(x: 256, y: 210))
-        p.addCurve(to: CGPoint(x: 350, y: 40), control1: CGPoint(x: 268, y: 90), control2: CGPoint(x: 300, y: 40))
-        p.closeSubpath()
-        return p
-    }
-
-    static var wing: Path {
-        var p = Path()
-        p.move(to: CGPoint(x: 264, y: 266))
-        p.addCurve(to: CGPoint(x: 188, y: 352), control1: CGPoint(x: 232, y: 270), control2: CGPoint(x: 198, y: 305))
-        p.addCurve(to: CGPoint(x: 214, y: 450), control1: CGPoint(x: 180, y: 396), control2: CGPoint(x: 187, y: 436))
-        p.addCurve(to: CGPoint(x: 300, y: 476), control1: CGPoint(x: 244, y: 464), control2: CGPoint(x: 275, y: 474))
-        p.addLine(to: CGPoint(x: 300, y: 266))
-        p.closeSubpath()
-        return p
-    }
-
-    /// Seams between the two main buttons and the palm.
-    static var seams: Path {
-        var p = Path()
-        p.move(to: CGPoint(x: 350, y: 42)); p.addLine(to: CGPoint(x: 350, y: 92))
-        p.move(to: CGPoint(x: 350, y: 206)); p.addLine(to: CGPoint(x: 350, y: 240))
-        p.move(to: CGPoint(x: 259, y: 258))
-        p.addQuadCurve(to: CGPoint(x: 441, y: 258), control: CGPoint(x: 350, y: 232))
-        return p
-    }
-
-    static let wheel = CGRect(x: 338, y: 96, width: 24, height: 64)
-    static let thumbWheel = CGRect(x: 250, y: 118, width: 14, height: 46)
-
-    static func rect(_ slot: Slot) -> CGRect {
-        switch slot {
-        case .middle: return wheel
-        case .thumbWheel: return thumbWheel
-        case .modeShift: return CGRect(x: 341, y: 172, width: 18, height: 28)
-        case .gesture: return CGRect(x: 249, y: 174, width: 15, height: 28)
-        case .forward: return CGRect(x: 248, y: 206, width: 15, height: 28)
-        case .back: return CGRect(x: 248, y: 238, width: 15, height: 28)
-        case .thumbPanel: return CGRect(x: 203, y: 312, width: 50, height: 108)
-        default: return .zero
-        }
-    }
-
-    /// Where each button's label sits, and which side of the mouse.
-    static func chip(_ slot: Slot) -> (center: CGPoint, left: Bool) {
-        switch slot {
-        case .thumbWheel: return (CGPoint(x: 92, y: 58), true)
-        case .gesture: return (CGPoint(x: 92, y: 126), true)
-        case .forward: return (CGPoint(x: 92, y: 194), true)
-        case .back: return (CGPoint(x: 92, y: 262), true)
-        case .thumbPanel: return (CGPoint(x: 92, y: 372), true)
-        case .middle: return (CGPoint(x: 568, y: 128), false)
-        case .modeShift: return (CGPoint(x: 568, y: 204), false)
-        default: return (.zero, true)
-        }
-    }
-
-    static let chipSize = CGSize(width: 172, height: 52)
-}
-
+/// The picture of the connected mouse, drawn from its profile, with a label for each control.
 struct MouseView: View {
     @ObservedObject var state: AppState
     @Environment(\.colorScheme) private var scheme
@@ -85,28 +15,31 @@ struct MouseView: View {
             // soft floor shadow
             Ellipse()
                 .fill(Color.black.opacity(scheme == .dark ? 0.45 : 0.16))
-                .frame(width: 250, height: 60)
+                .frame(width: art.shadow.width, height: art.shadow.height)
                 .blur(radius: 22)
-                .position(x: 335, y: 478)
+                .position(x: art.shadow.midX, y: art.shadow.midY)
 
-            MouseArt.wing
-                .fill(LinearGradient(colors: [Color(white: 0.23), Color(white: 0.12)], startPoint: .top, endPoint: .bottom))
-            MouseArt.wing.stroke(Color.white.opacity(0.07), lineWidth: 1)
+            if let wing = art.wing {
+                wing.fill(LinearGradient(colors: [Color(white: 0.23), Color(white: 0.12)], startPoint: .top, endPoint: .bottom))
+                wing.stroke(Color.white.opacity(0.07), lineWidth: 1)
+            }
 
-            MouseArt.body
+            art.body
                 .fill(LinearGradient(colors: [Color(white: 0.34), Color(white: 0.15)], startPoint: .topLeading, endPoint: .bottomTrailing))
                 .shadow(color: .black.opacity(0.28), radius: 14, y: 8)
-            MouseArt.body
+            art.body
                 .fill(RadialGradient(colors: [Color.white.opacity(0.13), .clear], center: UnitPoint(x: 0.42, y: 0.2), startRadius: 4, endRadius: 190))
-            MouseArt.body.stroke(Color.white.opacity(0.10), lineWidth: 1)
-            MouseArt.seams.stroke(Color.black.opacity(0.45), style: StrokeStyle(lineWidth: 1.6, lineCap: .round))
+            art.body.stroke(Color.white.opacity(0.10), lineWidth: 1)
+            art.seams.stroke(Color.black.opacity(0.45), style: StrokeStyle(lineWidth: 1.6, lineCap: .round))
 
-            ForEach(Slot.buttons) { slot in leader(slot) }
-            ForEach(Slot.buttons) { slot in part(slot) }
-            ForEach(Slot.buttons) { slot in chip(slot) }
+            ForEach(state.profile.controls) { control in leader(control) }
+            ForEach(state.profile.controls) { control in part(control) }
+            ForEach(state.profile.controls) { control in chip(control) }
         }
-        .frame(width: MouseArt.size.width, height: MouseArt.size.height)
+        .frame(width: art.size.width, height: art.size.height)
     }
+
+    private var art: MouseArt { state.profile.art }
 
     // MARK: Pieces
 
@@ -128,22 +61,24 @@ struct MouseView: View {
     }
 
     @ViewBuilder
-    private func part(_ slot: Slot) -> some View {
-        let r = MouseArt.rect(slot)
+    private func part(_ control: MouseControl) -> some View {
+        let slot = control.slot
+        let r = control.rect
         let on = isSelected(slot)
-        let fill = on ? Palette.accent : Color(white: slot == .thumbPanel ? 0.30 : 0.56)
         Group {
-            if slot == .middle || slot == .thumbWheel {
-                ridged(r, fill: fill)
-            } else if slot == .thumbPanel {
+            switch control.shape {
+            case .wheel:
+                ridged(r, fill: on ? Palette.accent : Color(white: 0.56))
+            case .pad(let tilt):
+                let fill = on ? Palette.accent : Color(white: 0.30)
                 RoundedRectangle(cornerRadius: 22, style: .continuous)
                     .fill(fill)
                     .overlay(RoundedRectangle(cornerRadius: 22, style: .continuous).stroke(Color.white.opacity(on ? 0.5 : 0.14), lineWidth: 1))
                     .frame(width: r.width, height: r.height)
-                    .rotationEffect(.degrees(-7))
+                    .rotationEffect(.degrees(tilt))
                     .position(x: r.midX, y: r.midY)
-            } else {
-                Capsule().fill(fill)
+            case .button:
+                Capsule().fill(on ? Palette.accent : Color(white: 0.56))
                     .overlay(Capsule().stroke(Color.black.opacity(0.35), lineWidth: 0.8))
                     .frame(width: r.width, height: r.height)
                     .position(x: r.midX, y: r.midY)
@@ -160,15 +95,15 @@ struct MouseView: View {
         .animation(.easeOut(duration: 0.18), value: on)
     }
 
-    private func leader(_ slot: Slot) -> some View {
-        let r = MouseArt.rect(slot)
-        let c = MouseArt.chip(slot)
-        let from = CGPoint(x: c.center.x + (c.left ? 1 : -1) * MouseArt.chipSize.width / 2, y: c.center.y)
-        let to = CGPoint(x: c.left ? r.minX - 3 : r.maxX + 3, y: r.midY)
-        let on = isSelected(slot)
+    private func leader(_ control: MouseControl) -> some View {
+        let r = control.rect
+        let left = control.chipOnLeft
+        let from = CGPoint(x: control.chip.x + (left ? 1 : -1) * MouseArt.chipSize.width / 2, y: control.chip.y)
+        let to = CGPoint(x: left ? r.minX - 3 : r.maxX + 3, y: r.midY)
+        let on = isSelected(control.slot)
         var p = Path()
         p.move(to: from)
-        let elbow = CGPoint(x: from.x + (c.left ? 18 : -18), y: from.y)
+        let elbow = CGPoint(x: from.x + (left ? 18 : -18), y: from.y)
         p.addLine(to: elbow)
         p.addLine(to: to)
         return ZStack {
@@ -179,8 +114,8 @@ struct MouseView: View {
         }
     }
 
-    private func chip(_ slot: Slot) -> some View {
-        let c = MouseArt.chip(slot)
+    private func chip(_ control: MouseControl) -> some View {
+        let slot = control.slot
         let on = isSelected(slot)
         let action = state.action(slot)
         return Button { state.selected = slot } label: {
@@ -190,7 +125,7 @@ struct MouseView: View {
                     .foregroundStyle(on ? Palette.accent : .secondary)
                     .frame(width: 20)
                 VStack(alignment: .leading, spacing: 1) {
-                    Text(slot.title)
+                    Text(control.title)
                         .font(.system(size: 10.5, weight: .medium))
                         .foregroundStyle(.secondary)
                     Text(Catalog.title(action, slot: slot))
@@ -214,7 +149,7 @@ struct MouseView: View {
             .contentShape(RoundedRectangle(cornerRadius: 13, style: .continuous))
         }
         .buttonStyle(.plain)
-        .position(c.center)
+        .position(control.chip)
         .animation(.easeOut(duration: 0.18), value: on)
     }
 }
