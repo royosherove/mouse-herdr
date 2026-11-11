@@ -350,7 +350,6 @@ final class AppState: ObservableObject {
         guard agentsAvailable, (feelAgents && hapticsOn && hapticsAvailable) || ring.isOpen else { return }
         agents.fetch { [weak self] list in
             guard let self else { return }
-            self.ring.update(list)
             var next: [String: String] = [:]
             var nowWaiting = false, nowDone = false
             for a in list {
@@ -369,7 +368,7 @@ final class AppState: ObservableObject {
 
     private func openRing() {
         ring.show(agents.latest)
-        agents.fetch { [weak self] list in self?.ring.update(list) }
+        agents.fetch(details: true) { [weak self] list in self?.ring.update(list) }
     }
 
     // MARK: Haptics and extras

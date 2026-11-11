@@ -51,8 +51,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                     ["address": "t\(i)", "agent": "claude-code", "status": s.0, "where": "\(s.1) / \(s.2)"]
                 }]))
             }
+            if args.contains("--live"), let hc = AgentWatcher.tool("hc") {
+                list = list.map { a in
+                    var a = a
+                    let p = Process(); p.executableURL = URL(fileURLWithPath: hc); p.arguments = ["get", a.id, "--json"]
+                    let out = Pipe(); p.standardOutput = out; try? p.run()
+                    if let o = try? JSONSerialization.jsonObject(with: out.fileHandleForReading.readDataToEndOfFile()) as? [String: Any] {
+                        a.title = o["title"] as? String ?? ""
+                        a.message = (o["status"] as? [String: Any])?["msg"] as? String ?? ""
+                        a.kind = (o["status"] as? [String: Any])?["kind"] as? String ?? ""
+                    }
+                    return a
+                }
+            } else if !list.isEmpty {
+                list[0].kind = "question"
+                list[0].message = "answer: Should refunds over $500 need a second approver, or keep the single-step flow we have today? (Second approver (Recommended) · Keep single step · Decide per region)"
+            }
             model.layout(list)
-            model.highlighted = model.slices.dropFirst(3).first?.id
+            model.highlighted = model.slices.first?.id
+            if let s = model.slices.first {
+                let size = RingModel.bubbleSize(for: s.agent)
+                let dx = CGFloat(cos(s.mid)), dy = CGFloat(sin(s.mid))
+                let reach = s.outer + 54 + abs(dx) * size.width / 2 + abs(dy) * size.height / 2
+                model.bubble = RingModel.Bubble(offset: CGSize(width: dx * reach, height: dy * reach), size: size,
+                                                toward: CGSize(width: -dx, height: -dy))
+            }
             let view = ZStack { Color(white: 0.55); RingView(model: model) }.frame(width: RingView.side, height: RingView.side)
             let r = ImageRenderer(content: view)
             r.scale = 1.5

@@ -8,6 +8,38 @@ struct AgentInfo: Identifiable, Equatable {
     let status: String    // idle, working, done, blocked, error, or "" when unknown
     let space: String
     let tab: String
+    var title = ""        // what the session is about
+    var message = ""      // what the agent last said it wants (its question, for one that is waiting)
+    var kind = ""         // question, permission, auth…
+
+    /// The agent's words, split into the question and any choices it offered.
+    var speech: (text: String, options: [String]) {
+        var text = message.trimmingCharacters(in: .whitespacesAndNewlines)
+        for prefix in ["answer:", "approve:", "permission:"] where text.lowercased().hasPrefix(prefix) {
+            text = String(text.dropFirst(prefix.count)).trimmingCharacters(in: .whitespaces)
+        }
+        var options: [String] = []
+        // Choices arrive as a trailing "(A · B · C)"; find the bracket that closes at the very end.
+        if text.hasSuffix(")") {
+            let chars = Array(text)
+            var depth = 0, open: Int?
+            for i in stride(from: chars.count - 1, through: 0, by: -1) {
+                if chars[i] == ")" { depth += 1 }
+                else if chars[i] == "(" { depth -= 1; if depth == 0 { open = i; break } }
+            }
+            if let open, open > 0 {
+                let parts = String(chars[(open + 1)..<(chars.count - 1)]).components(separatedBy: " · ")
+                if parts.count > 1 {
+                    options = parts.prefix(4).map { $0.count > 44 ? String($0.prefix(43)) + "…" : $0 }
+                    text = String(chars[..<open]).trimmingCharacters(in: .whitespaces)
+                }
+            }
+        }
+        if text.count > 260 { text = String(text.prefix(257)) + "…" }
+        return (text, options)
+    }
+
+    var hasSpeech: Bool { !message.isEmpty || !title.isEmpty }
 
     var needsYou: Bool { status == "blocked" || status == "error" }
 
@@ -92,11 +124,31 @@ final class AgentWatcher {
         return out.sorted { ($0.rank, $0.space, $0.tab) < ($1.rank, $1.space, $1.tab) }
     }
 
+    /// Fill in what each agent is saying (its title and question) from `hc get`.
+    private static func addDetails(_ list: [AgentInfo], hc: String) -> [AgentInfo] {
+        var out = list
+        let lock = NSLock()
+        DispatchQueue.concurrentPerform(iterations: list.count) { i in
+            guard let data = run(hc, ["get", list[i].id, "--json"]),
+                  let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return }
+            let status = obj["status"] as? [String: Any]
+            lock.lock()
+            out[i].title = obj["title"] as? String ?? ""
+            out[i].message = status?["msg"] as? String ?? ""
+            out[i].kind = status?["kind"] as? String ?? ""
+            lock.unlock()
+        }
+        return out
+    }
+
     /// Fetch the current agents; the result arrives on the main thread.
-    func fetch(_ done: @escaping ([AgentInfo]) -> Void) {
+    func fetch(details: Bool = false, _ done: @escaping ([AgentInfo]) -> Void) {
         queue.async {
             var list: [AgentInfo] = []
-            if let hc = Self.tool("hc"), let data = Self.run(hc, ["ls", "--json"]) { list = Self.parse(data) }
+            if let hc = Self.tool("hc"), let data = Self.run(hc, ["ls", "--json"]) {
+                list = Self.parse(data)
+                if details { list = Self.addDetails(list, hc: hc) }
+            }
             DispatchQueue.main.async {
                 self.latest = list
                 done(list)
@@ -154,6 +206,31 @@ final class RingModel: ObservableObject {
     @Published var hidden = 0
     /// False while the wheel is off screen, so its animations stop costing anything.
     @Published var active = true
+    /// Where the speech bubble for the highlighted agent sits, relative to the wheel's centre.
+    @Published var bubble: Bubble?
+
+    struct Bubble: Equatable {
+        var offset: CGSize
+        var size: CGSize
+        var toward: CGSize     // unit vector from the bubble to the agent it belongs to
+    }
+
+    static func bubbleSize(for a: AgentInfo) -> CGSize {
+        let speech = a.speech
+        let body = speech.text.isEmpty ? a.title : speech.text
+        let width: CGFloat = 330
+        // Measure the text the same way it will be drawn.
+        let base = NSFont.systemFont(ofSize: 13.5, weight: .medium)
+        let font = base.fontDescriptor.withDesign(.rounded).flatMap { NSFont(descriptor: $0, size: 13.5) } ?? base
+        let para = NSMutableParagraphStyle()
+        para.lineSpacing = 1.5
+        let box = (body as NSString).boundingRect(
+            with: CGSize(width: width - 32, height: 2000), options: [.usesLineFragmentOrigin, .usesFontLeading],
+            attributes: [.font: font, .paragraphStyle: para])
+        let h = 24 + 19 + ceil(box.height) + 6 + CGFloat(speech.options.count) * 18 + (speech.options.isEmpty ? 0 : 8)
+        return CGSize(width: width, height: min(h, 320))
+    }
+
     var outerRadius: CGFloat = 250
 
     func layout(_ agents: [AgentInfo]) {
@@ -216,7 +293,7 @@ struct Wedge: Shape {
 
 struct RingView: View {
     @ObservedObject var model: RingModel
-    static let side: CGFloat = 800
+    static let side: CGFloat = 1400
 
     var body: some View {
         TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: !model.active)) { timeline in
@@ -229,6 +306,11 @@ struct RingView: View {
                     slice(s, on: model.highlighted == s.id, t: t)
                 }
                 hub
+                if let b = model.bubble, let a = model.slices.first(where: { $0.id == model.highlighted })?.agent {
+                    SpeechBubble(agent: a, bubble: b)
+                        .offset(b.offset)
+                        .transition(.scale(scale: 0.6).combined(with: .opacity))
+                }
             }
             .frame(width: Self.side, height: Self.side)
         }
@@ -337,6 +419,76 @@ struct RingView: View {
     }
 }
 
+/// A cartoon speech bubble with the agent's question in it.
+struct SpeechBubble: View {
+    let agent: AgentInfo
+    let bubble: RingModel.Bubble
+
+    private struct Tail: Shape {
+        let toward: CGSize
+        func path(in rect: CGRect) -> Path {
+            let c = CGPoint(x: rect.midX, y: rect.midY)
+            let tx = toward.width, ty = toward.height
+            // Distance from the centre to the bubble's edge in that direction.
+            let edge = min(abs(tx) > 0.001 ? rect.width / 2 / abs(tx) : .infinity,
+                           abs(ty) > 0.001 ? rect.height / 2 / abs(ty) : .infinity)
+            let tip = CGPoint(x: c.x + tx * (edge + 26), y: c.y + ty * (edge + 26))
+            let base = CGPoint(x: c.x + tx * (edge - 14), y: c.y + ty * (edge - 14))
+            let px = -ty * 15, py = tx * 15
+            var p = Path()
+            p.move(to: tip)
+            p.addLine(to: CGPoint(x: base.x + px, y: base.y + py))
+            p.addLine(to: CGPoint(x: base.x - px, y: base.y - py))
+            p.closeSubpath()
+            return p
+        }
+    }
+
+    var body: some View {
+        let speech = agent.speech
+        let ink = Color(white: 0.10)
+        let heading = agent.needsYou
+            ? (agent.kind.isEmpty ? "Waiting for you" : "Asks: \(agent.kind)")
+            : agent.statusWord.capitalized
+        return ZStack {
+            Tail(toward: bubble.toward).fill(Color.white)
+            Tail(toward: bubble.toward).stroke(ink, style: StrokeStyle(lineWidth: 2.5, lineJoin: .round))
+            RoundedRectangle(cornerRadius: 22, style: .continuous).fill(Color.white)
+            RoundedRectangle(cornerRadius: 22, style: .continuous).stroke(ink, lineWidth: 2.5)
+            // Cover the outline where the tail joins the bubble.
+            Tail(toward: bubble.toward).fill(Color.white).scaleEffect(0.86)
+            VStack(alignment: .leading, spacing: 5) {
+                HStack(spacing: 6) {
+                    Circle().fill(agent.needsYou ? Palette.accent : agent.color).frame(width: 8, height: 8)
+                    Text(heading.uppercased()).font(.system(size: 10, weight: .heavy)).kerning(0.5)
+                        .foregroundStyle(agent.needsYou ? Palette.accent : Color(white: 0.4))
+                    Spacer(minLength: 0)
+                }
+                Text(speech.text.isEmpty ? agent.title : speech.text)
+                    .font(.system(size: 13.5, weight: .medium, design: .rounded))
+                    .foregroundStyle(ink)
+                    .lineSpacing(1.5)
+                    .fixedSize(horizontal: false, vertical: true)
+                if !speech.options.isEmpty {
+                    VStack(alignment: .leading, spacing: 2) {
+                        ForEach(Array(speech.options.enumerated()), id: \.offset) { i, option in
+                            Text("\(i + 1).  \(option)")
+                                .font(.system(size: 12, weight: .semibold, design: .rounded))
+                                .foregroundStyle(Color(white: 0.32)).lineLimit(1)
+                        }
+                    }
+                    .padding(.top, 2)
+                }
+            }
+            .padding(.horizontal, 16).padding(.vertical, 12)
+            .frame(width: bubble.size.width, height: bubble.size.height, alignment: .topLeading)
+            .clipped()
+        }
+        .frame(width: bubble.size.width, height: bubble.size.height)
+        .shadow(color: .black.opacity(0.35), radius: 12, y: 5)
+    }
+}
+
 /// Shows the agent ring around the pointer and tracks which agent is aimed at.
 final class AgentRing {
     let model = RingModel()
@@ -350,6 +502,7 @@ final class AgentRing {
 
     func show(_ agents: [AgentInfo]) {
         model.highlighted = nil
+        model.bubble = nil
         model.active = true
         model.layout(agents)
         let side = RingView.side
@@ -391,6 +544,7 @@ final class AgentRing {
     func update(_ agents: [AgentInfo]) {
         guard isOpen else { return }
         model.layout(agents)
+        placeBubble()
     }
 
     private func track() {
@@ -400,8 +554,38 @@ final class AgentRing {
         let aim = model.target(for: rel)
         if aim != model.highlighted {
             model.highlighted = aim
+            placeBubble()
             if aim != nil { onAim?() }
         }
+    }
+
+    /// Put the speech bubble just outside the highlighted wedge, kept on screen.
+    private func placeBubble() {
+        guard let s = model.slices.first(where: { $0.id == model.highlighted }), s.agent.hasSpeech else {
+            model.bubble = nil
+            return
+        }
+        let size = RingModel.bubbleSize(for: s.agent)
+        let dx = CGFloat(cos(s.mid)), dy = CGFloat(sin(s.mid))
+        let reach = s.outer + 54 + abs(dx) * size.width / 2 + abs(dy) * size.height / 2
+        var pos = CGPoint(x: dx * reach, y: dy * reach)
+        // Keep it inside the screen the wheel is on.
+        let primaryHeight = NSScreen.screens.first?.frame.height ?? 0
+        let here = CGPoint(x: centre.x, y: primaryHeight - centre.y)
+        if let screen = NSScreen.screens.first(where: { NSMouseInRect(here, $0.frame, false) }) {
+            let v = screen.visibleFrame
+            let minX = v.minX - centre.x + size.width / 2 + 10, maxX = v.maxX - centre.x - size.width / 2 - 10
+            let top = primaryHeight - v.maxY, bottom = primaryHeight - v.minY
+            let minY = top - centre.y + size.height / 2 + 10, maxY = bottom - centre.y - size.height / 2 - 10
+            if minX < maxX { pos.x = min(max(pos.x, minX), maxX) }
+            if minY < maxY { pos.y = min(max(pos.y, minY), maxY) }
+        }
+        // The tail points back at the middle of the wedge.
+        let anchor = CGPoint(x: dx * (s.inner + s.outer) / 2, y: dy * (s.inner + s.outer) / 2)
+        let vx = anchor.x - pos.x, vy = anchor.y - pos.y
+        let len = max(1, hypot(vx, vy))
+        model.bubble = RingModel.Bubble(offset: CGSize(width: pos.x, height: pos.y), size: size,
+                                        toward: CGSize(width: vx / len, height: vy / len))
     }
 
     /// Pick whatever is aimed at (or just close when nothing is).
