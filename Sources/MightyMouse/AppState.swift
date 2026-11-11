@@ -440,7 +440,6 @@ final class AppState: ObservableObject {
         } else {
             dragPressed = Date()
             dragger.begin()
-            if dragger.isDragging { buzz(.grab) }
         }
     }
 
@@ -453,7 +452,6 @@ final class AppState: ObservableObject {
             Log.write("drag: carrying until next click")
         } else {
             dragger.end()
-            buzz(.drop)
         }
     }
 

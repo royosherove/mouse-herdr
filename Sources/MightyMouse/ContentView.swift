@@ -291,7 +291,7 @@ struct ExtrasView: View {
 
             VStack(alignment: .leading, spacing: 8) {
                 Toggle("Haptic feedback", isOn: $state.hapticsOn).font(.system(size: 13, weight: .medium))
-                Text("A small bump in the thumb pad when you grab or drop a window, hit a screen edge, or finish a gesture.")
+                Text("A small bump in the thumb pad when a dragged window reaches a snap edge or you finish a gesture.")
                     .font(.system(size: 11.5)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 HStack {
                     Picker("", selection: $state.hapticStrength) {
