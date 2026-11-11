@@ -11,6 +11,8 @@ struct AgentInfo: Identifiable, Equatable {
     var title = ""        // what the session is about
     var message = ""      // what the agent last said it wants (its question, for one that is waiting)
     var kind = ""         // question, permission, auth…
+    var typeOption: Int?  // the number of the dialog's "Type something" choice, when it has one
+    var hints: [Int: String] = [:]   // the explanation shown under each choice, by choice number (1-based)
 
     /// The agent's words, split into the question and any choices it offered.
     var speech: (text: String, options: [String]) { speech(full: false) }
@@ -131,6 +133,33 @@ final class AgentWatcher {
         return out.sorted { ($0.rank, $0.space, $0.tab) < ($1.rank, $1.space, $1.tab) }
     }
 
+    /// Read a question dialog off the agent's screen: the explanation under each numbered choice,
+    /// and the number of its "Type something" choice if it has one.
+    static func parseDialog(_ screen: String) -> (hints: [Int: String], typeOption: Int?) {
+        var hints: [Int: String] = [:]
+        var typeOption: Int?
+        var current: Int?
+        for raw in screen.components(separatedBy: "\n") {
+            let line = raw.trimmingCharacters(in: .whitespaces)
+            if line.hasPrefix("─") || line.hasPrefix("Enter to select") || line.hasPrefix("[hc]") { current = nil; continue }
+            var body = line
+            if body.hasPrefix("❯") { body = String(body.dropFirst()).trimmingCharacters(in: .whitespaces) }
+            let digits = body.prefix { $0.isNumber }
+            if !digits.isEmpty, digits.count <= 2, body.dropFirst(digits.count).hasPrefix(". "), let n = Int(digits) {
+                let label = body.dropFirst(digits.count + 2)
+                if label.lowercased().hasPrefix("type something") { typeOption = n; current = nil }
+                else { current = n }
+                continue
+            }
+            guard let n = current, !line.isEmpty, raw.hasPrefix("   ") else {
+                if line.isEmpty { current = nil }
+                continue
+            }
+            hints[n] = (hints[n].map { $0 + " " } ?? "") + line
+        }
+        return (hints, typeOption)
+    }
+
     /// Fill in what each agent is saying (its title and question) from `hc get`.
     private static func addDetails(_ list: [AgentInfo], hc: String) -> [AgentInfo] {
         var out = list
@@ -139,7 +168,15 @@ final class AgentWatcher {
             guard let data = run(hc, ["get", list[i].id, "--json"]),
                   let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return }
             let status = obj["status"] as? [String: Any]
+            // A waiting agent's dialog may also offer a free-text choice; find its number on the screen.
+            var typeOption: Int?
+            var hints: [Int: String] = [:]
+            if list[i].needsYou, let screen = run(hc, ["read", list[i].id]), let text = String(data: screen, encoding: .utf8) {
+                (hints, typeOption) = parseDialog(text)
+            }
             lock.lock()
+            out[i].typeOption = typeOption
+            out[i].hints = hints
             out[i].title = obj["title"] as? String ?? ""
             out[i].message = status?["msg"] as? String ?? ""
             out[i].kind = status?["kind"] as? String ?? ""
@@ -169,6 +206,18 @@ final class AgentWatcher {
         queue.async {
             guard let hc = Self.tool("hc") else { return }
             if Self.run(hc, ["keys", agent.id, "\(option + 1)"]) == nil { Log.write("agents: hc keys failed") }
+        }
+    }
+
+    /// Answer in the person's own words: pick the dialog's free-text choice, then type the text.
+    func answer(_ agent: AgentInfo, typed text: String) {
+        guard let number = agent.typeOption else { return }
+        Log.write("agents: answering \(agent.id) with typed text (\(text.count) characters)")
+        queue.async {
+            guard let hc = Self.tool("hc") else { return }
+            if Self.run(hc, ["keys", agent.id, "\(number)"]) == nil { Log.write("agents: hc keys failed"); return }
+            Thread.sleep(forTimeInterval: 0.7)
+            if Self.run(hc, ["send", "--force", agent.id, text]) == nil { Log.write("agents: hc send failed") }
         }
     }
 
@@ -232,6 +281,7 @@ final class RingModel: ObservableObject {
         var textHeight: CGFloat
         var optionCount: Int
         var expanded = false   // showing the whole question rather than a preview
+        var hintOnLeft = false // which side of the bubble has room for a choice's explanation
     }
 
     /// Which answer button the pointer is over, and which one was just sent.
@@ -258,7 +308,7 @@ final class RingModel: ObservableObject {
             with: CGSize(width: bubbleWidth - 2 * pad, height: 2000), options: [.usesLineFragmentOrigin, .usesFontLeading],
             attributes: [.font: font, .paragraphStyle: para])
         let textHeight = min(ceil(box.height) + 4, expanded ? 620 : 190)
-        let n = a.needsYou ? speech.options.count : 0
+        let n = a.needsYou ? speech.options.count + (a.typeOption != nil ? 1 : 0) : 0
         var h = pad + headerHeight + 6 + textHeight + pad
         if n > 0 { h += 12 + CGFloat(n) * optionHeight + CGFloat(n - 1) * optionGap + hintHeight }
         return (CGSize(width: bubbleWidth, height: h), textHeight, n)
@@ -519,11 +569,19 @@ struct SpeechBubble: View {
                 .offset(x: RingModel.pad, y: RingModel.pad + RingModel.headerHeight + 6)
 
             if bubble.optionCount > 0 {
-                ForEach(0..<min(bubble.optionCount, speech.options.count), id: \.self) { i in
+                ForEach(0..<bubble.optionCount, id: \.self) { i in
                     let r = RingModel.optionRect(i, in: bubble)
-                    answerButton(i, speech.options[i], hot: model.hoveredOption == i, sent: model.sentOption == i)
+                    let own = i >= speech.options.count
+                    answerButton(i, own ? "Type your own answer…" : speech.options[i], own: own,
+                                 hot: model.hoveredOption == i, sent: model.sentOption == i)
                         .frame(width: r.width, height: r.height)
                         .offset(x: r.minX, y: r.minY)
+                }
+                if let i = model.hoveredOption, let hint = agent.hints[i + 1], !hint.isEmpty {
+                    let r = RingModel.optionRect(i, in: bubble)
+                    hintCard(hint)
+                        .offset(x: bubble.hintOnLeft ? -(300 + 14) : bubble.size.width + 14, y: r.minY - 6)
+                        .transition(.opacity)
                 }
                 Text(model.sentOption != nil ? "Sent — waiting for the agent…"
                      : (!bubble.expanded && agent.isLongQuestion) ? "Move onto the bubble to read the whole question"
@@ -540,8 +598,23 @@ struct SpeechBubble: View {
         .animation(.easeOut(duration: 0.15), value: model.sentOption)
     }
 
+    /// The explanation for the choice under the pointer, like an item tooltip in a game.
+    private func hintCard(_ text: String) -> some View {
+        Text(text)
+            .font(.system(size: 13, weight: .medium, design: .rounded))
+            .foregroundStyle(.white)
+            .lineSpacing(2)
+            .fixedSize(horizontal: false, vertical: true)
+            .padding(.horizontal, 14).padding(.vertical, 11)
+            .frame(width: 300, alignment: .leading)
+            .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(Color(white: 0.11).opacity(0.97)))
+            .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(Palette.accent, lineWidth: 2))
+            .shadow(color: .black.opacity(0.4), radius: 8, y: 3)
+            .frame(width: 300, height: RingModel.optionHeight, alignment: .topLeading)
+    }
+
     /// A chunky, game-style answer button with a key-cap number.
-    private func answerButton(_ i: Int, _ text: String, hot: Bool, sent: Bool) -> some View {
+    private func answerButton(_ i: Int, _ text: String, own: Bool, hot: Bool, sent: Bool) -> some View {
         let green = Color(red: 0.20, green: 0.72, blue: 0.42)
         let face: AnyShapeStyle = sent
             ? AnyShapeStyle(LinearGradient(colors: [green.opacity(0.9), green], startPoint: .top, endPoint: .bottom))
@@ -554,6 +627,9 @@ struct SpeechBubble: View {
                 RoundedRectangle(cornerRadius: 7, style: .continuous).fill(lit ? Color.white : Color(white: 0.14))
                 if sent {
                     Image(systemName: "checkmark").font(.system(size: 12, weight: .heavy)).foregroundStyle(green)
+                } else if own {
+                    Image(systemName: "pencil").font(.system(size: 13, weight: .heavy))
+                        .foregroundStyle(hot ? Palette.accent : Color.white)
                 } else {
                     Text("\(i + 1)").font(.system(size: 13, weight: .heavy, design: .rounded))
                         .foregroundStyle(hot ? Palette.accent : Color.white)
@@ -562,7 +638,8 @@ struct SpeechBubble: View {
             .frame(width: 26, height: 26)
             Text(text)
                 .font(.system(size: 14, weight: .semibold, design: .rounded))
-                .foregroundStyle(lit ? Color.white : Color(white: 0.12))
+                .italic(own)
+                .foregroundStyle(lit ? Color.white : Color(white: own ? 0.35 : 0.12))
                 .lineLimit(1).minimumScaleFactor(0.78)
             Spacer(minLength: 0)
             if hot && !sent {
@@ -590,6 +667,8 @@ final class AgentRing {
     var onChoose: ((AgentInfo) -> Void)?
     /// The person picked one of the agent's offered answers (by index).
     var onAnswer: ((AgentInfo, Int) -> Void)?
+    /// The person wants to type their own answer; the point is where to put the text box (Cocoa screen coordinates).
+    var onType: ((AgentInfo, CGPoint) -> Void)?
     private var lastQuestion = ""
     private var expandedFor: String?           // agent whose bubble is showing its whole question
     private var anchor: (x: CGFloat, bottom: CGFloat)?   // keeps the answer buttons still while it grows
@@ -728,13 +807,19 @@ final class AgentRing {
             if minX < maxX { pos.x = min(max(pos.x, minX), maxX) }
             if minY < maxY { pos.y = min(max(pos.y, minY), maxY) }
         }
+        // The explanation card goes on whichever side of the bubble has room.
+        var hintOnLeft = false
+        if let screen = NSScreen.screens.first(where: { NSMouseInRect(here, $0.frame, false) }) {
+            hintOnLeft = centre.x + pos.x + size.width / 2 + 330 > screen.visibleFrame.maxX
+        }
         // The tail points back at the middle of the wedge.
         let anchor = CGPoint(x: dx * (s.inner + s.outer) / 2, y: dy * (s.inner + s.outer) / 2)
         let vx = anchor.x - pos.x, vy = anchor.y - pos.y
         let len = max(1, hypot(vx, vy))
         model.bubble = RingModel.Bubble(offset: CGSize(width: pos.x, height: pos.y), size: size,
                                         toward: CGSize(width: vx / len, height: vy / len),
-                                        textHeight: metrics.textHeight, optionCount: metrics.options, expanded: expanded)
+                                        textHeight: metrics.textHeight, optionCount: metrics.options, expanded: expanded,
+                                        hintOnLeft: hintOnLeft)
     }
 
     /// Pick whatever is aimed at (or just close when nothing is).
@@ -743,6 +828,16 @@ final class AgentRing {
         // On an answer button: send that answer and stay open for the next question.
         if let option = model.hoveredOption, let picked, picked.needsYou {
             guard model.sentOption == nil else { return }
+            if option >= picked.speech.options.count {
+                // The free-text choice: swap the wheel for a text box where the bubble was.
+                let primaryHeight = NSScreen.screens.first?.frame.height ?? 0
+                let b = model.bubble
+                let spot = CGPoint(x: centre.x + (b?.offset.width ?? 0),
+                                   y: primaryHeight - (centre.y + (b?.offset.height ?? 0) + (b?.size.height ?? 0) / 2 - 60))
+                close()
+                onType?(picked, spot)
+                return
+            }
             model.sentOption = option
             onAnswer?(picked, option)
             return
@@ -756,5 +851,120 @@ final class AgentRing {
         timer = nil
         panel?.orderOut(nil)
         model.active = false
+    }
+}
+
+
+// MARK: - Typing an answer
+
+/// A borderless panel that can still take the keyboard.
+private final class KeyPanel: NSPanel {
+    override var canBecomeKey: Bool { true }
+}
+
+private struct ReplyView: View {
+    let agent: AgentInfo
+    let send: (String) -> Void
+    let cancel: () -> Void
+    @State private var text = ""
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        let ink = Color(white: 0.10)
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 6) {
+                Circle().fill(Palette.accent).frame(width: 8, height: 8)
+                Text("\(agent.space.uppercased())  ·  YOUR ANSWER")
+                    .font(.system(size: 10, weight: .heavy)).kerning(0.5).foregroundStyle(Palette.accent)
+            }
+            Text(agent.speech.text)
+                .font(.system(size: 12, weight: .medium, design: .rounded))
+                .foregroundStyle(Color(white: 0.35)).lineLimit(3)
+            TextField("Type your answer…", text: $text)
+                .textFieldStyle(.plain)
+                .font(.system(size: 15, weight: .medium, design: .rounded))
+                .foregroundStyle(ink)
+                .padding(.horizontal, 12).padding(.vertical, 10)
+                .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Color(white: 0.94)))
+                .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(Palette.accent, lineWidth: 2))
+                .focused($focused)
+                .onSubmit { submit() }
+            HStack {
+                Text("Return to send  ·  Esc to cancel").font(.system(size: 10.5, weight: .medium)).foregroundStyle(Color(white: 0.45))
+                Spacer()
+                Button("Send") { submit() }
+                    .buttonStyle(.borderedProminent).tint(Palette.accent).controlSize(.small)
+                    .disabled(text.trimmingCharacters(in: .whitespaces).isEmpty)
+            }
+        }
+        .padding(16)
+        .frame(width: 420)
+        .background(RoundedRectangle(cornerRadius: 24, style: .continuous).fill(Color.white))
+        .overlay(RoundedRectangle(cornerRadius: 24, style: .continuous).stroke(ink, lineWidth: 2.5))
+        .padding(14)   // room for the shadow
+        .shadow(color: .black.opacity(0.35), radius: 10, y: 4)
+        .colorScheme(.light)
+        .onExitCommand { cancel() }
+        .onAppear { DispatchQueue.main.async { focused = true } }
+    }
+
+    private func submit() {
+        let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !t.isEmpty { send(t) }
+    }
+}
+
+/// A small text box for answering an agent in your own words.
+final class ReplyBox: NSObject, NSWindowDelegate {
+    private var panel: NSPanel?
+    private var previous: NSRunningApplication?
+
+    var isOpen: Bool { panel != nil }
+
+    func show(for agent: AgentInfo, at spot: CGPoint, send: @escaping (String) -> Void) {
+        close(restore: false)
+        previous = NSWorkspace.shared.frontmostApplication
+        let host = NSHostingView(rootView: ReplyView(agent: agent, send: { [weak self] text in
+            send(text)
+            self?.close(restore: true)
+        }, cancel: { [weak self] in self?.close(restore: true) }))
+        let size = host.fittingSize
+        var origin = CGPoint(x: spot.x - size.width / 2, y: spot.y - size.height / 2)
+        if let screen = NSScreen.screens.first(where: { NSMouseInRect(spot, $0.frame, false) }) ?? NSScreen.main {
+            let v = screen.visibleFrame
+            origin.x = min(max(origin.x, v.minX + 8), v.maxX - size.width - 8)
+            origin.y = min(max(origin.y, v.minY + 8), v.maxY - size.height - 8)
+        }
+        let p = KeyPanel(contentRect: NSRect(origin: origin, size: size), styleMask: [.borderless],
+                         backing: .buffered, defer: false)
+        p.isOpaque = false
+        p.backgroundColor = .clear
+        p.hasShadow = false
+        p.level = .popUpMenu
+        p.isReleasedWhenClosed = false
+        p.hidesOnDeactivate = false
+        p.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .transient]
+        p.contentView = host
+        p.delegate = self
+        panel = p
+        NSApp.activate(ignoringOtherApps: true)
+        p.makeKeyAndOrderFront(nil)
+    }
+
+    /// Clicking away cancels.
+    func windowDidResignKey(_ notification: Notification) { close(restore: false) }
+
+    func close(restore: Bool) {
+        guard let p = panel else { return }
+        panel = nil
+        p.delegate = nil
+        p.orderOut(nil)
+        // Hand the keyboard back to whatever was in front.
+        if restore, let app = previous, let url = app.bundleURL, app.bundleIdentifier != Bundle.main.bundleIdentifier {
+            let config = NSWorkspace.OpenConfiguration()
+            config.activates = true
+            NSWorkspace.shared.openApplication(at: url, configuration: config, completionHandler: nil)
+        }
+        previous = nil
     }
 }

@@ -176,6 +176,7 @@ final class AppState: ObservableObject {
     let feeler = HoverFeeler()
     let agents = AgentWatcher()
     let ring = AgentRing()
+    let replyBox = ReplyBox()
     private var agentStatus: [String: String] = [:]
     private var agentsSeen = false
     private var ticks = 0
@@ -243,6 +244,7 @@ final class AppState: ObservableObject {
             guard let self else { return false }
             // With the agent ring open, a click picks the agent being aimed at.
             if self.ring.isOpen { self.ring.choose(); return true }
+            if self.replyBox.isOpen { return false }
             // A normal click drops a window that is being carried.
             guard self.stickyDrag else { return false }
             self.stickyDrag = false
@@ -263,6 +265,10 @@ final class AppState: ObservableObject {
         agentsAvailable = agents.isAvailable
         ring.onAim = { [weak self] in self?.buzz(.tick) }
         ring.onChoose = { [weak self] agent in self?.agents.focus(agent) }
+        ring.onType = { [weak self] agent, spot in
+            guard let self else { return }
+            self.replyBox.show(for: agent, at: spot) { text in self.agents.answer(agent, typed: text) }
+        }
         ring.onAnswer = { [weak self] agent, option in
             guard let self else { return }
             self.agents.answer(agent, option: option)

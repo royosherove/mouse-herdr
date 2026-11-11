@@ -60,11 +60,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                         a.title = o["title"] as? String ?? ""
                         a.message = (o["status"] as? [String: Any])?["msg"] as? String ?? ""
                         a.kind = (o["status"] as? [String: Any])?["kind"] as? String ?? ""
+                        if a.needsYou { a.typeOption = 4 }
                     }
                     return a
                 }
             } else if !list.isEmpty {
                 list[0].kind = "question"
+                let sampleScreen = """
+                ❯ 1. Second approver (Recommended)
+                     A second person confirms every refund over $500 before it is sent. Catches duplicate refunds,
+                     but customers may wait up to a day.
+                  2. Keep single step
+                     No change. Fastest for customers; duplicates are still possible when a request times out.
+                  3. Decide per region
+                     Each region picks its own rule.
+                  4. Type something.
+                ────────
+                  5. Chat about this
+                """
+                (list[0].hints, list[0].typeOption) = AgentWatcher.parseDialog(sampleScreen)
+                print("parsed hints:", list[0].hints.keys.sorted(), "type option:", list[0].typeOption ?? -1)
                 list[0].message = "answer: Question 4: Refunds over $500 currently go through in one step. Finance flagged three cases last quarter where a refund was issued twice because the first attempt timed out and the agent retried it. A second approver would catch those, but it adds a delay of up to a day for customers in regions where the approver is offline, and support has asked that we do not slow down the common case. Should refunds over $500 need a second approver, or keep the single-step flow we have today? (Second approver (Recommended) · Keep single step · Decide per region)"
             }
             model.layout(list)
