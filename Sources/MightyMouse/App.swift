@@ -65,16 +65,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 }
             } else if !list.isEmpty {
                 list[0].kind = "question"
-                list[0].message = "answer: Should refunds over $500 need a second approver, or keep the single-step flow we have today? (Second approver (Recommended) · Keep single step · Decide per region)"
+                list[0].message = "answer: Question 4: Refunds over $500 currently go through in one step. Finance flagged three cases last quarter where a refund was issued twice because the first attempt timed out and the agent retried it. A second approver would catch those, but it adds a delay of up to a day for customers in regions where the approver is offline, and support has asked that we do not slow down the common case. Should refunds over $500 need a second approver, or keep the single-step flow we have today? (Second approver (Recommended) · Keep single step · Decide per region)"
             }
             model.layout(list)
             model.highlighted = model.slices.first?.id
             if let s = model.slices.first {
-                let m = RingModel.bubbleMetrics(for: s.agent)
+                let big = args.contains("--expanded")
+                let m = RingModel.bubbleMetrics(for: s.agent, expanded: big)
                 let dx = CGFloat(cos(s.mid)), dy = CGFloat(sin(s.mid))
                 let reach = s.outer + 54 + abs(dx) * m.size.width / 2 + abs(dy) * m.size.height / 2
                 model.bubble = RingModel.Bubble(offset: CGSize(width: dx * reach, height: dy * reach), size: m.size,
-                                                toward: CGSize(width: -dx, height: -dy), textHeight: m.textHeight, optionCount: m.options)
+                                                toward: CGSize(width: -dx, height: -dy), textHeight: m.textHeight, optionCount: m.options, expanded: big)
                 model.hoveredOption = m.options > 1 ? 1 : nil
             }
             let view = ZStack { Color(white: 0.55); RingView(model: model) }.frame(width: RingView.side, height: RingView.side)

@@ -13,7 +13,10 @@ struct AgentInfo: Identifiable, Equatable {
     var kind = ""         // question, permission, auth…
 
     /// The agent's words, split into the question and any choices it offered.
-    var speech: (text: String, options: [String]) {
+    var speech: (text: String, options: [String]) { speech(full: false) }
+
+    /// `full` keeps the whole question; otherwise it is shortened to a preview.
+    func speech(full: Bool) -> (text: String, options: [String]) {
         var text = message.trimmingCharacters(in: .whitespacesAndNewlines)
         for prefix in ["answer:", "approve:", "permission:"] where text.lowercased().hasPrefix(prefix) {
             text = String(text.dropFirst(prefix.count)).trimmingCharacters(in: .whitespaces)
@@ -35,9 +38,13 @@ struct AgentInfo: Identifiable, Equatable {
                 }
             }
         }
-        if text.count > 260 { text = String(text.prefix(257)) + "…" }
+        let limit = full ? 1600 : 220
+        if text.count > limit { text = String(text.prefix(limit - 1)) + "…" }
         return (text, options)
     }
+
+    /// True when the preview leaves part of the question out.
+    var isLongQuestion: Bool { speech(full: true).text.count > 220 }
 
     var hasSpeech: Bool { !message.isEmpty || !title.isEmpty }
 
@@ -224,6 +231,7 @@ final class RingModel: ObservableObject {
         var toward: CGSize     // unit vector from the bubble to the agent it belongs to
         var textHeight: CGFloat
         var optionCount: Int
+        var expanded = false   // showing the whole question rather than a preview
     }
 
     /// Which answer button the pointer is over, and which one was just sent.
@@ -238,8 +246,8 @@ final class RingModel: ObservableObject {
     static let optionGap: CGFloat = 8
     static let hintHeight: CGFloat = 20
 
-    static func bubbleMetrics(for a: AgentInfo) -> (size: CGSize, textHeight: CGFloat, options: Int) {
-        let speech = a.speech
+    static func bubbleMetrics(for a: AgentInfo, expanded: Bool = false) -> (size: CGSize, textHeight: CGFloat, options: Int) {
+        let speech = a.speech(full: expanded)
         let body = speech.text.isEmpty ? a.title : speech.text
         // Measure the text the same way it will be drawn.
         let base = NSFont.systemFont(ofSize: 14, weight: .medium)
@@ -249,7 +257,7 @@ final class RingModel: ObservableObject {
         let box = (body as NSString).boundingRect(
             with: CGSize(width: bubbleWidth - 2 * pad, height: 2000), options: [.usesLineFragmentOrigin, .usesFontLeading],
             attributes: [.font: font, .paragraphStyle: para])
-        let textHeight = min(ceil(box.height) + 4, 190)
+        let textHeight = min(ceil(box.height) + 4, expanded ? 620 : 190)
         let n = a.needsYou ? speech.options.count : 0
         var h = pad + headerHeight + 6 + textHeight + pad
         if n > 0 { h += 12 + CGFloat(n) * optionHeight + CGFloat(n - 1) * optionGap + hintHeight }
@@ -478,7 +486,7 @@ struct SpeechBubble: View {
     @ObservedObject var model: RingModel
 
     var body: some View {
-        let speech = agent.speech
+        let speech = agent.speech(full: bubble.expanded)
         let ink = Color(white: 0.10)
         let heading = agent.needsYou
             ? (agent.kind.isEmpty ? "Waiting for you" : "Asks: \(agent.kind)")
@@ -517,7 +525,9 @@ struct SpeechBubble: View {
                         .frame(width: r.width, height: r.height)
                         .offset(x: r.minX, y: r.minY)
                 }
-                Text(model.sentOption != nil ? "Sent — waiting for the agent…" : "Point at an answer and click to send it")
+                Text(model.sentOption != nil ? "Sent — waiting for the agent…"
+                     : (!bubble.expanded && agent.isLongQuestion) ? "Move onto the bubble to read the whole question"
+                     : "Point at an answer and click to send it")
                     .font(.system(size: 10.5, weight: .medium))
                     .foregroundStyle(Color(white: 0.45))
                     .frame(width: bubble.size.width - 2 * RingModel.pad, height: RingModel.hintHeight, alignment: .center)
@@ -581,6 +591,8 @@ final class AgentRing {
     /// The person picked one of the agent's offered answers (by index).
     var onAnswer: ((AgentInfo, Int) -> Void)?
     private var lastQuestion = ""
+    private var expandedFor: String?           // agent whose bubble is showing its whole question
+    private var anchor: (x: CGFloat, bottom: CGFloat)?   // keeps the answer buttons still while it grows
     private var panel: NSPanel?
     private var timer: Timer?
     private var centre = CGPoint.zero      // screen coordinates, top-left origin
@@ -589,6 +601,8 @@ final class AgentRing {
 
     func show(_ agents: [AgentInfo]) {
         model.highlighted = nil
+        expandedFor = nil
+        anchor = nil
         model.hoveredOption = nil
         model.sentOption = nil
         model.bubble = nil
@@ -650,6 +664,19 @@ final class AgentRing {
             overBubble = CGRect(origin: .zero, size: b.size).insetBy(dx: -45, dy: -45).contains(local)
             for i in 0..<b.optionCount where RingModel.optionRect(i, in: b).insetBy(dx: -3, dy: -4).contains(local) { option = i }
         }
+        // Moving onto the bubble opens up the whole question. It grows upward from its bottom
+        // edge so the answer buttons stay under the pointer.
+        if let b = model.bubble, !b.expanded, let id = model.highlighted, expandedFor != id,
+           let a = model.slices.first(where: { $0.id == id })?.agent, a.isLongQuestion {
+            let local = CGPoint(x: rel.width - b.offset.width + b.size.width / 2,
+                                y: rel.height - b.offset.height + b.size.height / 2)
+            if CGRect(origin: .zero, size: b.size).insetBy(dx: -6, dy: -6).contains(local) {
+                expandedFor = id
+                anchor = (b.offset.width, b.offset.height + b.size.height / 2)
+                placeBubble()
+                return
+            }
+        }
         if option != model.hoveredOption {
             model.hoveredOption = option
             if option != nil { onAim?() }
@@ -663,6 +690,8 @@ final class AgentRing {
         if aim != model.highlighted {
             model.highlighted = aim
             model.sentOption = nil
+            expandedFor = nil
+            anchor = nil
             placeBubble()
             if aim != nil { onAim?() }
         }
@@ -674,12 +703,20 @@ final class AgentRing {
             model.bubble = nil
             return
         }
-        let metrics = RingModel.bubbleMetrics(for: s.agent)
+        if s.agent.message != lastQuestion {
+            // A new question: start again from the preview.
+            lastQuestion = s.agent.message
+            model.sentOption = nil
+            expandedFor = nil
+            anchor = nil
+        }
+        let expanded = expandedFor == s.id
+        let metrics = RingModel.bubbleMetrics(for: s.agent, expanded: expanded)
         let size = metrics.size
         let dx = CGFloat(cos(s.mid)), dy = CGFloat(sin(s.mid))
         let reach = s.outer + 54 + abs(dx) * size.width / 2 + abs(dy) * size.height / 2
         var pos = CGPoint(x: dx * reach, y: dy * reach)
-        if s.agent.message != lastQuestion { lastQuestion = s.agent.message; model.sentOption = nil }
+        if expanded, let anchor { pos = CGPoint(x: anchor.x, y: anchor.bottom - size.height / 2) }
         // Keep it inside the screen the wheel is on.
         let primaryHeight = NSScreen.screens.first?.frame.height ?? 0
         let here = CGPoint(x: centre.x, y: primaryHeight - centre.y)
@@ -697,7 +734,7 @@ final class AgentRing {
         let len = max(1, hypot(vx, vy))
         model.bubble = RingModel.Bubble(offset: CGSize(width: pos.x, height: pos.y), size: size,
                                         toward: CGSize(width: vx / len, height: vy / len),
-                                        textHeight: metrics.textHeight, optionCount: metrics.options)
+                                        textHeight: metrics.textHeight, optionCount: metrics.options, expanded: expanded)
     }
 
     /// Pick whatever is aimed at (or just close when nothing is).

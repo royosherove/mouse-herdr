@@ -180,6 +180,8 @@ final class AppState: ObservableObject {
     private var agentsSeen = false
     private var ticks = 0
     private var ringPress = false
+    private var ringTimer: Timer?
+    private var ringFetching = false
     private var dragStartMouse = CGPoint.zero
     private var wheelAcc = 0.0
     private var wheelLast = Date.distantPast
@@ -266,11 +268,8 @@ final class AppState: ObservableObject {
             self.agents.answer(agent, option: option)
             self.buzz(.tick)
             // The agent may ask its next question; refresh so it can be answered straight away.
-            for delay in [1.3, 3.0, 6.0] {
-                DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
-                    guard self.ring.isOpen else { return }
-                    self.agents.fetch(details: true) { self.ring.update($0) }
-                }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.7) {
+                if self.ring.isOpen { self.refreshRing() }
             }
         }
 
@@ -380,7 +379,24 @@ final class AppState: ObservableObject {
 
     private func openRing() {
         ring.show(agents.latest)
-        agents.fetch(details: true) { [weak self] list in self?.ring.update(list) }
+        refreshRing()
+        // Keep the wheel live while it is showing: agents change state, ask new questions, finish.
+        ringTimer?.invalidate()
+        let t = Timer(timeInterval: 1.5, repeats: true) { [weak self] timer in
+            guard let self, self.ring.isOpen else { timer.invalidate(); return }
+            self.refreshRing()
+        }
+        RunLoop.main.add(t, forMode: .common)
+        ringTimer = t
+    }
+
+    private func refreshRing() {
+        guard !ringFetching else { return }
+        ringFetching = true
+        agents.fetch(details: true) { [weak self] list in
+            self?.ringFetching = false
+            self?.ring.update(list)
+        }
     }
 
     // MARK: Haptics and extras
