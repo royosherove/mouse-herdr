@@ -261,6 +261,18 @@ final class AppState: ObservableObject {
         agentsAvailable = agents.isAvailable
         ring.onAim = { [weak self] in self?.buzz(.tick) }
         ring.onChoose = { [weak self] agent in self?.agents.focus(agent) }
+        ring.onAnswer = { [weak self] agent, option in
+            guard let self else { return }
+            self.agents.answer(agent, option: option)
+            self.buzz(.tick)
+            // The agent may ask its next question; refresh so it can be answered straight away.
+            for delay in [1.3, 3.0, 6.0] {
+                DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+                    guard self.ring.isOpen else { return }
+                    self.agents.fetch(details: true) { self.ring.update($0) }
+                }
+            }
+        }
 
         hid.onStatus = { [weak self] s in
             guard let self else { return }

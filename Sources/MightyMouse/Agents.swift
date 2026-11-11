@@ -156,6 +156,15 @@ final class AgentWatcher {
         }
     }
 
+    /// Answer the agent's question by pressing the number of the chosen option in its terminal.
+    func answer(_ agent: AgentInfo, option: Int) {
+        Log.write("agents: answering \(agent.id) with option \(option + 1)")
+        queue.async {
+            guard let hc = Self.tool("hc") else { return }
+            if Self.run(hc, ["keys", agent.id, "\(option + 1)"]) == nil { Log.write("agents: hc keys failed") }
+        }
+    }
+
     /// Bring this agent's terminal to the front in the Herdr app.
     func focus(_ agent: AgentInfo) {
         Log.write("agents: focusing \(agent.id) (\(agent.space) / \(agent.tab))")
@@ -213,22 +222,44 @@ final class RingModel: ObservableObject {
         var offset: CGSize
         var size: CGSize
         var toward: CGSize     // unit vector from the bubble to the agent it belongs to
+        var textHeight: CGFloat
+        var optionCount: Int
     }
 
-    static func bubbleSize(for a: AgentInfo) -> CGSize {
+    /// Which answer button the pointer is over, and which one was just sent.
+    @Published var hoveredOption: Int?
+    @Published var sentOption: Int?
+
+    // Bubble layout, shared by drawing and hit-testing.
+    static let bubbleWidth: CGFloat = 400
+    static let pad: CGFloat = 16
+    static let headerHeight: CGFloat = 16
+    static let optionHeight: CGFloat = 44
+    static let optionGap: CGFloat = 8
+    static let hintHeight: CGFloat = 20
+
+    static func bubbleMetrics(for a: AgentInfo) -> (size: CGSize, textHeight: CGFloat, options: Int) {
         let speech = a.speech
         let body = speech.text.isEmpty ? a.title : speech.text
-        let width: CGFloat = 330
         // Measure the text the same way it will be drawn.
-        let base = NSFont.systemFont(ofSize: 13.5, weight: .medium)
-        let font = base.fontDescriptor.withDesign(.rounded).flatMap { NSFont(descriptor: $0, size: 13.5) } ?? base
+        let base = NSFont.systemFont(ofSize: 14, weight: .medium)
+        let font = base.fontDescriptor.withDesign(.rounded).flatMap { NSFont(descriptor: $0, size: 14) } ?? base
         let para = NSMutableParagraphStyle()
-        para.lineSpacing = 1.5
+        para.lineSpacing = 2
         let box = (body as NSString).boundingRect(
-            with: CGSize(width: width - 32, height: 2000), options: [.usesLineFragmentOrigin, .usesFontLeading],
+            with: CGSize(width: bubbleWidth - 2 * pad, height: 2000), options: [.usesLineFragmentOrigin, .usesFontLeading],
             attributes: [.font: font, .paragraphStyle: para])
-        let h = 24 + 19 + ceil(box.height) + 6 + CGFloat(speech.options.count) * 18 + (speech.options.isEmpty ? 0 : 8)
-        return CGSize(width: width, height: min(h, 320))
+        let textHeight = min(ceil(box.height) + 4, 190)
+        let n = a.needsYou ? speech.options.count : 0
+        var h = pad + headerHeight + 6 + textHeight + pad
+        if n > 0 { h += 12 + CGFloat(n) * optionHeight + CGFloat(n - 1) * optionGap + hintHeight }
+        return (CGSize(width: bubbleWidth, height: h), textHeight, n)
+    }
+
+    /// An answer button's frame, measured from the bubble's top-left corner.
+    static func optionRect(_ i: Int, in b: Bubble) -> CGRect {
+        let top = pad + headerHeight + 6 + b.textHeight + 12
+        return CGRect(x: pad, y: top + CGFloat(i) * (optionHeight + optionGap), width: b.size.width - 2 * pad, height: optionHeight)
     }
 
     var outerRadius: CGFloat = 250
@@ -307,8 +338,8 @@ struct RingView: View {
                 }
                 hub
                 if let b = model.bubble, let a = model.slices.first(where: { $0.id == model.highlighted })?.agent {
-                    SpeechBubble(agent: a, bubble: b)
-                        .offset(b.offset)
+                    SpeechBubble(agent: a, bubble: b, model: model)
+                        .offset(x: b.offset.width, y: b.offset.height)
                         .transition(.scale(scale: 0.6).combined(with: .opacity))
                 }
             }
@@ -444,48 +475,101 @@ struct SpeechBubble: View {
         }
     }
 
+    @ObservedObject var model: RingModel
+
     var body: some View {
         let speech = agent.speech
         let ink = Color(white: 0.10)
         let heading = agent.needsYou
             ? (agent.kind.isEmpty ? "Waiting for you" : "Asks: \(agent.kind)")
             : agent.statusWord.capitalized
-        return ZStack {
-            Tail(toward: bubble.toward).fill(Color.white)
-            Tail(toward: bubble.toward).stroke(ink, style: StrokeStyle(lineWidth: 2.5, lineJoin: .round))
-            RoundedRectangle(cornerRadius: 22, style: .continuous).fill(Color.white)
-            RoundedRectangle(cornerRadius: 22, style: .continuous).stroke(ink, lineWidth: 2.5)
-            // Cover the outline where the tail joins the bubble.
-            Tail(toward: bubble.toward).fill(Color.white).scaleEffect(0.86)
-            VStack(alignment: .leading, spacing: 5) {
-                HStack(spacing: 6) {
-                    Circle().fill(agent.needsYou ? Palette.accent : agent.color).frame(width: 8, height: 8)
-                    Text(heading.uppercased()).font(.system(size: 10, weight: .heavy)).kerning(0.5)
-                        .foregroundStyle(agent.needsYou ? Palette.accent : Color(white: 0.4))
-                    Spacer(minLength: 0)
+        return ZStack(alignment: .topLeading) {
+            Group {
+                Tail(toward: bubble.toward).fill(Color.white)
+                Tail(toward: bubble.toward).stroke(ink, style: StrokeStyle(lineWidth: 2.5, lineJoin: .round))
+                RoundedRectangle(cornerRadius: 24, style: .continuous).fill(Color.white)
+                RoundedRectangle(cornerRadius: 24, style: .continuous).stroke(ink, lineWidth: 2.5)
+                // Cover the outline where the tail joins the bubble.
+                Tail(toward: bubble.toward).fill(Color.white).scaleEffect(0.86)
+            }
+            .frame(width: bubble.size.width, height: bubble.size.height)
+
+            HStack(spacing: 6) {
+                Circle().fill(agent.needsYou ? Palette.accent : agent.color).frame(width: 8, height: 8)
+                Text("\(agent.space.uppercased())  ·  \(heading.uppercased())")
+                    .font(.system(size: 10, weight: .heavy)).kerning(0.5)
+                    .foregroundStyle(agent.needsYou ? Palette.accent : Color(white: 0.4)).lineLimit(1)
+            }
+            .frame(width: bubble.size.width - 2 * RingModel.pad, height: RingModel.headerHeight, alignment: .leading)
+            .offset(x: RingModel.pad, y: RingModel.pad)
+
+            Text(speech.text.isEmpty ? agent.title : speech.text)
+                .font(.system(size: 14, weight: .medium, design: .rounded))
+                .foregroundStyle(ink)
+                .lineSpacing(2)
+                .frame(width: bubble.size.width - 2 * RingModel.pad, height: bubble.textHeight, alignment: .topLeading)
+                .offset(x: RingModel.pad, y: RingModel.pad + RingModel.headerHeight + 6)
+
+            if bubble.optionCount > 0 {
+                ForEach(0..<min(bubble.optionCount, speech.options.count), id: \.self) { i in
+                    let r = RingModel.optionRect(i, in: bubble)
+                    answerButton(i, speech.options[i], hot: model.hoveredOption == i, sent: model.sentOption == i)
+                        .frame(width: r.width, height: r.height)
+                        .offset(x: r.minX, y: r.minY)
                 }
-                Text(speech.text.isEmpty ? agent.title : speech.text)
-                    .font(.system(size: 13.5, weight: .medium, design: .rounded))
-                    .foregroundStyle(ink)
-                    .lineSpacing(1.5)
-                    .fixedSize(horizontal: false, vertical: true)
-                if !speech.options.isEmpty {
-                    VStack(alignment: .leading, spacing: 2) {
-                        ForEach(Array(speech.options.enumerated()), id: \.offset) { i, option in
-                            Text("\(i + 1).  \(option)")
-                                .font(.system(size: 12, weight: .semibold, design: .rounded))
-                                .foregroundStyle(Color(white: 0.32)).lineLimit(1)
-                        }
-                    }
-                    .padding(.top, 2)
+                Text(model.sentOption != nil ? "Sent — waiting for the agent…" : "Point at an answer and click to send it")
+                    .font(.system(size: 10.5, weight: .medium))
+                    .foregroundStyle(Color(white: 0.45))
+                    .frame(width: bubble.size.width - 2 * RingModel.pad, height: RingModel.hintHeight, alignment: .center)
+                    .offset(x: RingModel.pad, y: bubble.size.height - RingModel.pad - RingModel.hintHeight + 6)
+            }
+        }
+        .frame(width: bubble.size.width, height: bubble.size.height, alignment: .topLeading)
+        .shadow(color: .black.opacity(0.35), radius: 12, y: 5)
+        .animation(.spring(response: 0.18, dampingFraction: 0.7), value: model.hoveredOption)
+        .animation(.easeOut(duration: 0.15), value: model.sentOption)
+    }
+
+    /// A chunky, game-style answer button with a key-cap number.
+    private func answerButton(_ i: Int, _ text: String, hot: Bool, sent: Bool) -> some View {
+        let green = Color(red: 0.20, green: 0.72, blue: 0.42)
+        let face: AnyShapeStyle = sent
+            ? AnyShapeStyle(LinearGradient(colors: [green.opacity(0.9), green], startPoint: .top, endPoint: .bottom))
+            : hot
+                ? AnyShapeStyle(LinearGradient(colors: [Color(red: 1.0, green: 0.60, blue: 0.40), Palette.accent], startPoint: .top, endPoint: .bottom))
+                : AnyShapeStyle(LinearGradient(colors: [Color(white: 0.98), Color(white: 0.91)], startPoint: .top, endPoint: .bottom))
+        let lit = hot || sent
+        return HStack(spacing: 10) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 7, style: .continuous).fill(lit ? Color.white : Color(white: 0.14))
+                if sent {
+                    Image(systemName: "checkmark").font(.system(size: 12, weight: .heavy)).foregroundStyle(green)
+                } else {
+                    Text("\(i + 1)").font(.system(size: 13, weight: .heavy, design: .rounded))
+                        .foregroundStyle(hot ? Palette.accent : Color.white)
                 }
             }
-            .padding(.horizontal, 16).padding(.vertical, 12)
-            .frame(width: bubble.size.width, height: bubble.size.height, alignment: .topLeading)
-            .clipped()
+            .frame(width: 26, height: 26)
+            Text(text)
+                .font(.system(size: 14, weight: .semibold, design: .rounded))
+                .foregroundStyle(lit ? Color.white : Color(white: 0.12))
+                .lineLimit(1).minimumScaleFactor(0.78)
+            Spacer(minLength: 0)
+            if hot && !sent {
+                Image(systemName: "arrow.right.circle.fill").font(.system(size: 17)).foregroundStyle(.white)
+            }
         }
-        .frame(width: bubble.size.width, height: bubble.size.height)
-        .shadow(color: .black.opacity(0.35), radius: 12, y: 5)
+        .padding(.horizontal, 10)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(RoundedRectangle(cornerRadius: 13, style: .continuous).fill(face))
+        .overlay(RoundedRectangle(cornerRadius: 13, style: .continuous)
+            .stroke(lit ? Color.white.opacity(0.0) : Color(white: 0.10).opacity(0.22), lineWidth: 1.5))
+        // A darker lip underneath gives the button some depth.
+        .background(RoundedRectangle(cornerRadius: 13, style: .continuous)
+            .fill(sent ? green.opacity(0.55) : hot ? Color(red: 0.78, green: 0.26, blue: 0.20) : Color(white: 0.72))
+            .offset(y: hot ? 2 : 3))
+        .offset(y: hot ? 1 : 0)
+        .scaleEffect(hot ? 1.025 : 1)
     }
 }
 
@@ -494,6 +578,9 @@ final class AgentRing {
     let model = RingModel()
     var onAim: (() -> Void)?
     var onChoose: ((AgentInfo) -> Void)?
+    /// The person picked one of the agent's offered answers (by index).
+    var onAnswer: ((AgentInfo, Int) -> Void)?
+    private var lastQuestion = ""
     private var panel: NSPanel?
     private var timer: Timer?
     private var centre = CGPoint.zero      // screen coordinates, top-left origin
@@ -502,6 +589,8 @@ final class AgentRing {
 
     func show(_ agents: [AgentInfo]) {
         model.highlighted = nil
+        model.hoveredOption = nil
+        model.sentOption = nil
         model.bubble = nil
         model.active = true
         model.layout(agents)
@@ -550,10 +639,30 @@ final class AgentRing {
     private func track() {
         guard let m = CGEvent(source: nil)?.location else { return }
         let rel = CGSize(width: m.x - centre.x, height: m.y - centre.y)
-        if hypot(rel.width, rel.height) > model.outerRadius + 200 { close(); return }
+        let r = hypot(rel.width, rel.height)
+
+        // Is the pointer over the bubble, or one of its answer buttons?
+        var option: Int?
+        var overBubble = false
+        if let b = model.bubble {
+            let local = CGPoint(x: rel.width - b.offset.width + b.size.width / 2,
+                                y: rel.height - b.offset.height + b.size.height / 2)
+            overBubble = CGRect(origin: .zero, size: b.size).insetBy(dx: -45, dy: -45).contains(local)
+            for i in 0..<b.optionCount where RingModel.optionRect(i, in: b).insetBy(dx: -3, dy: -4).contains(local) { option = i }
+        }
+        if option != model.hoveredOption {
+            model.hoveredOption = option
+            if option != nil { onAim?() }
+        }
+        if !overBubble && r > model.outerRadius + 330 { close(); return }
+
+        // Which wedge is aimed at only changes while the pointer is on the wheel itself,
+        // so travelling out to the bubble keeps that agent selected.
+        guard r <= model.outerRadius + 22, !overBubble || r <= model.outerRadius else { return }
         let aim = model.target(for: rel)
         if aim != model.highlighted {
             model.highlighted = aim
+            model.sentOption = nil
             placeBubble()
             if aim != nil { onAim?() }
         }
@@ -565,10 +674,12 @@ final class AgentRing {
             model.bubble = nil
             return
         }
-        let size = RingModel.bubbleSize(for: s.agent)
+        let metrics = RingModel.bubbleMetrics(for: s.agent)
+        let size = metrics.size
         let dx = CGFloat(cos(s.mid)), dy = CGFloat(sin(s.mid))
         let reach = s.outer + 54 + abs(dx) * size.width / 2 + abs(dy) * size.height / 2
         var pos = CGPoint(x: dx * reach, y: dy * reach)
+        if s.agent.message != lastQuestion { lastQuestion = s.agent.message; model.sentOption = nil }
         // Keep it inside the screen the wheel is on.
         let primaryHeight = NSScreen.screens.first?.frame.height ?? 0
         let here = CGPoint(x: centre.x, y: primaryHeight - centre.y)
@@ -585,12 +696,20 @@ final class AgentRing {
         let vx = anchor.x - pos.x, vy = anchor.y - pos.y
         let len = max(1, hypot(vx, vy))
         model.bubble = RingModel.Bubble(offset: CGSize(width: pos.x, height: pos.y), size: size,
-                                        toward: CGSize(width: vx / len, height: vy / len))
+                                        toward: CGSize(width: vx / len, height: vy / len),
+                                        textHeight: metrics.textHeight, optionCount: metrics.options)
     }
 
     /// Pick whatever is aimed at (or just close when nothing is).
     func choose() {
         let picked = model.slices.first { $0.id == model.highlighted }?.agent
+        // On an answer button: send that answer and stay open for the next question.
+        if let option = model.hoveredOption, let picked, picked.needsYou {
+            guard model.sentOption == nil else { return }
+            model.sentOption = option
+            onAnswer?(picked, option)
+            return
+        }
         close()
         if let picked { onChoose?(picked) }
     }

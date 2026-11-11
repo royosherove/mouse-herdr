@@ -70,11 +70,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             model.layout(list)
             model.highlighted = model.slices.first?.id
             if let s = model.slices.first {
-                let size = RingModel.bubbleSize(for: s.agent)
+                let m = RingModel.bubbleMetrics(for: s.agent)
                 let dx = CGFloat(cos(s.mid)), dy = CGFloat(sin(s.mid))
-                let reach = s.outer + 54 + abs(dx) * size.width / 2 + abs(dy) * size.height / 2
-                model.bubble = RingModel.Bubble(offset: CGSize(width: dx * reach, height: dy * reach), size: size,
-                                                toward: CGSize(width: -dx, height: -dy))
+                let reach = s.outer + 54 + abs(dx) * m.size.width / 2 + abs(dy) * m.size.height / 2
+                model.bubble = RingModel.Bubble(offset: CGSize(width: dx * reach, height: dy * reach), size: m.size,
+                                                toward: CGSize(width: -dx, height: -dy), textHeight: m.textHeight, optionCount: m.options)
+                model.hoveredOption = m.options > 1 ? 1 : nil
             }
             let view = ZStack { Color(white: 0.55); RingView(model: model) }.frame(width: RingView.side, height: RingView.side)
             let r = ImageRenderer(content: view)
