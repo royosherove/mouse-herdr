@@ -152,6 +152,8 @@ final class RingModel: ObservableObject {
     @Published var slices: [Slice] = []
     @Published var highlighted: String?
     @Published var hidden = 0
+    /// False while the wheel is off screen, so its animations stop costing anything.
+    @Published var active = true
     var outerRadius: CGFloat = 250
 
     func layout(_ agents: [AgentInfo]) {
@@ -217,7 +219,7 @@ struct RingView: View {
     static let side: CGFloat = 800
 
     var body: some View {
-        TimelineView(.animation(minimumInterval: 1.0 / 30.0)) { timeline in
+        TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: !model.active)) { timeline in
             let t = timeline.date.timeIntervalSinceReferenceDate
             ZStack {
                 Circle()
@@ -348,6 +350,7 @@ final class AgentRing {
 
     func show(_ agents: [AgentInfo]) {
         model.highlighted = nil
+        model.active = true
         model.layout(agents)
         let side = RingView.side
         let mouse = NSEvent.mouseLocation
@@ -412,5 +415,6 @@ final class AgentRing {
         timer?.invalidate()
         timer = nil
         panel?.orderOut(nil)
+        model.active = false
     }
 }
