@@ -3,6 +3,7 @@ import SwiftUI
 struct ContentView: View {
     @ObservedObject var state: AppState
     @Environment(\.colorScheme) private var scheme
+    @State private var showExtras = false
 
     var body: some View {
         HStack(spacing: 0) {
@@ -132,6 +133,11 @@ struct ContentView: View {
                 get: { state.launchAtLogin }, set: { state.setLaunchAtLogin($0) }))
                 .toggleStyle(.checkbox).font(.system(size: 12))
             Spacer()
+            Button { showExtras.toggle() } label: {
+                Label("Haptics & extras", systemImage: "sparkles").font(.system(size: 12, weight: .medium))
+            }
+            .buttonStyle(.bordered).controlSize(.small)
+            .popover(isPresented: $showExtras, arrowEdge: .top) { ExtrasView(state: state) }
             Button("Reset to defaults") { state.resetAll() }
                 .buttonStyle(.plain).font(.system(size: 12)).foregroundStyle(.secondary)
         }
@@ -178,6 +184,17 @@ struct DetailPanel: View {
             Divider()
 
             ScrollView {
+                if slot == .thumbWheel {
+                    VStack(alignment: .leading, spacing: 2) {
+                        sectionTitle("When rolled")
+                        ForEach(Catalog.wheelModes) { p in
+                            row(title: p.title, symbol: p.symbol, selected: current.kind == p.id) {
+                                state.assign(Action(kind: p.id), to: slot)
+                            }
+                        }
+                    }
+                    .padding(.horizontal, 10).padding(.vertical, 12)
+                } else {
                 VStack(alignment: .leading, spacing: 14) {
                     ForEach(Catalog.groups) { group in
                         let presets = group.presets.filter(allowed)
@@ -206,6 +223,7 @@ struct DetailPanel: View {
                     }
                 }
                 .padding(.horizontal, 10).padding(.vertical, 12)
+                }
             }
         }
     }
@@ -259,6 +277,62 @@ struct DetailPanel: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+    }
+}
+
+// MARK: - Haptics & extras
+
+struct ExtrasView: View {
+    @ObservedObject var state: AppState
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("Haptics & extras").font(.system(size: 15, weight: .bold, design: .rounded))
+
+            VStack(alignment: .leading, spacing: 8) {
+                Toggle("Haptic feedback", isOn: $state.hapticsOn).font(.system(size: 13, weight: .medium))
+                Text("A small bump in the thumb pad when you grab or drop a window, hit a screen edge, or finish a gesture.")
+                    .font(.system(size: 11.5)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                HStack {
+                    Picker("", selection: $state.hapticStrength) {
+                        Text("Soft").tag(30); Text("Medium").tag(60); Text("Strong").tag(100)
+                    }
+                    .pickerStyle(.segmented).labelsHidden()
+                    Button("Try") { state.buzz(.hello) }
+                }
+                .disabled(!state.hapticsOn)
+                if !state.hapticsAvailable {
+                    Label("Needs the mouse connected with Input Monitoring allowed.", systemImage: "info.circle")
+                        .font(.system(size: 11.5)).foregroundStyle(Palette.accent)
+                }
+            }
+
+            Divider()
+            VStack(alignment: .leading, spacing: 4) {
+                Toggle("Feel buttons and links under the cursor", isOn: $state.feelHover)
+                    .font(.system(size: 13, weight: .medium)).disabled(!state.hapticsOn)
+                Text("A faint tick as the pointer lands on something clickable — buttons, links, menu and Dock items.")
+                    .font(.system(size: 11.5)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            }
+
+            Divider()
+            VStack(alignment: .leading, spacing: 4) {
+                Toggle("Feel window edges", isOn: $state.feelEdges)
+                    .font(.system(size: 13, weight: .medium)).disabled(!state.hapticsOn)
+                Text("A soft bump each time the pointer crosses into or out of a window.")
+                    .font(.system(size: 11.5)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            }
+
+            Divider()
+            VStack(alignment: .leading, spacing: 4) {
+                Toggle("Snap windows at screen edges", isOn: $state.snapWindows).font(.system(size: 13, weight: .medium))
+                Text("While dragging with the haptic panel, push into the left or right edge for half the screen, the top for full screen, or a corner for a quarter.")
+                    .font(.system(size: 11.5)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .toggleStyle(.switch).controlSize(.small)
+        .padding(18)
+        .frame(width: 340)
     }
 }
 

@@ -23,6 +23,7 @@ final class HIDPP {
     var onButtons: ((Set<UInt16>) -> Void)?
     var onRawXY: ((Int, Int) -> Void)?
     var onBattery: ((Int, Bool) -> Void)?
+    var onHaptics: ((Bool) -> Void)?
 
     private var thread: Thread?
     private var runLoop: CFRunLoop?
@@ -38,6 +39,11 @@ final class HIDPP {
     private var rcIdx: UInt8?
     private var batteryIdx: UInt8?
     private var wirelessIdx: UInt8?
+    private var hapticIdx: UInt8?
+    private var hapticMask: UInt32 = 0
+    private var hapticLevel: Int?          // nil = leave the mouse's own setting alone
+    private var lastHaptic = Date.distantPast
+    private var loggedHaptic = false
     private var desired: [UInt16: Bool] = [:]   // cid → wants raw XY; absent = leave native
     private var managed: [UInt16] = []
 
@@ -76,6 +82,33 @@ final class HIDPP {
     }
 
     func reapply() { enqueue { [self] in applyDiversions() } }
+
+    /// Play one of the mouse's built-in haptic waveforms.
+    func haptic(_ waveform: UInt8) {
+        enqueue { [self] in
+            guard let h = hapticIdx, device != nil else { return }
+            guard Date().timeIntervalSince(lastHaptic) > 0.045 else { return }   // don't flood the motor
+            lastHaptic = Date()
+            var id = waveform
+            if hapticMask != 0, id < 32, hapticMask & (1 << UInt32(id)) == 0 { id = 0 }
+            let ok = request(h, 4, [id], timeout: 0.25) != nil
+            if !ok || !loggedHaptic { loggedHaptic = true; Log.write(String(format: "haptics: play %02x %@", id, ok ? "ok" : "FAILED")) }
+        }
+    }
+
+    /// Haptic strength, 1–100.
+    func setHapticLevel(_ percent: Int) {
+        enqueue { [self] in
+            hapticLevel = percent
+            applyHapticLevel()
+        }
+    }
+
+    private func applyHapticLevel() {
+        guard let h = hapticIdx, let level = hapticLevel, device != nil else { return }
+        let ok = request(h, 2, [1, UInt8(max(1, min(100, level)))]) != nil
+        Log.write("haptics: level \(level)% \(ok ? "ok" : "FAILED")")
+    }
 
     /// Give every button back to the mouse (used on quit). Blocks briefly.
     func releaseAll() {
@@ -137,7 +170,7 @@ final class HIDPP {
     private func closeManager() {
         if let dev = device { IOHIDDeviceClose(dev, IOOptionBits(kIOHIDOptionsTypeNone)) }
         device = nil
-        rcIdx = nil; batteryIdx = nil; wirelessIdx = nil
+        rcIdx = nil; batteryIdx = nil; wirelessIdx = nil; hapticIdx = nil
         if let mgr = manager {
             IOHIDManagerUnscheduleFromRunLoop(mgr, CFRunLoopGetCurrent(), CFRunLoopMode.defaultMode.rawValue)
             IOHIDManagerClose(mgr, IOOptionBits(kIOHIDOptionsTypeNone))
@@ -177,6 +210,21 @@ final class HIDPP {
         wirelessIdx = featureIndex(0x1D4B)
         Log.write("features: reprog=\(rcIdx.map(String.init) ?? "-") battery=\(batteryIdx.map(String.init) ?? "-") wireless=\(wirelessIdx.map(String.init) ?? "-")")
 
+        hapticIdx = featureIndex(0x19B0)
+        if let h = hapticIdx {
+            if let info = request(h, 0), info.count >= 12 {
+                hapticMask = UInt32(info[8]) << 24 | UInt32(info[9]) << 16 | UInt32(info[10]) << 8 | UInt32(info[11])
+            }
+            let level = request(h, 1)
+            Log.write(String(format: "haptics: feature index %d, waveforms %08x, level %@", h, hapticMask,
+                             level.map { "\($0[4] & 1 == 1 ? "on" : "off") \($0[5])%" } ?? "?"))
+            applyHapticLevel()
+        } else {
+            Log.write("haptics: not offered by this mouse")
+        }
+        let hasHaptics = hapticIdx != nil
+        main { self.onHaptics?(hasHaptics) }
+
         let name = readName() ?? product
         let controls = readControls()
         for c in controls {
@@ -194,7 +242,7 @@ final class HIDPP {
         guard let current = device, current === dev else { return }
         Log.write("mouse disconnected")
         device = nil
-        rcIdx = nil; batteryIdx = nil; wirelessIdx = nil
+        rcIdx = nil; batteryIdx = nil; wirelessIdx = nil; hapticIdx = nil
         main { self.onStatus?(.searching) }
     }
 
@@ -312,7 +360,7 @@ final class HIDPP {
         } else if let wi = wirelessIdx, b[2] == wi {
             // The mouse reconnected and forgot its settings — tell it again.
             Log.write("mouse reconnected, re-applying")
-            submit { [self] in applyDiversions() }
+            submit { [self] in applyDiversions(); applyHapticLevel() }
         }
     }
 

@@ -65,7 +65,8 @@ codesign --force --keychain "$KC" --sign "MightyMouse Local Signing" --identifie
 echo "built $APP"
 
 if [ "${1:-}" = "install" ]; then
-  pkill -x MightyMouse 2>/dev/null && sleep 1 || true
+  pkill -x MightyMouse 2>/dev/null || true
+  while pgrep -x MightyMouse >/dev/null; do sleep 0.2; done
   rm -rf /Applications/MightyMouse.app
   ditto "$APP" /Applications/MightyMouse.app
   open /Applications/MightyMouse.app

@@ -14,6 +14,12 @@ final class WindowDragger {
 
     var isDragging: Bool { timer != nil }
 
+    var snapEnabled = true
+    /// Called when the cursor reaches a screen edge that the window would snap to.
+    var onZone: (() -> Void)?
+    private var zone: CGRect?
+    private let overlay = SnapOverlay()
+
     /// The window an on-screen element belongs to.
     private func window(containing element: AXUIElement) -> AXUIElement? {
         var current = element
@@ -86,6 +92,12 @@ final class WindowDragger {
     private func update() {
         guard let window, let mouse = CGEvent(source: nil)?.location else { return }
         var target = CGPoint(x: startOrigin.x + mouse.x - startMouse.x, y: startOrigin.y + mouse.y - startMouse.y)
+        let z = snapEnabled ? Snap.zone(for: mouse) : nil
+        if z != zone {
+            zone = z
+            overlay.show(z)
+            if z != nil { onZone?() }
+        }
         guard target != last else { return }
         last = target
         if let v = AXValueCreate(.cgPoint, &target) {
@@ -100,7 +112,17 @@ final class WindowDragger {
     private var loggedFailure = false
 
     func end() {
-        if timer != nil { Log.write("drag: dropped at \(Int(last.x)),\(Int(last.y))") }
+        if timer != nil { Log.write("drag: dropped at \(Int(last.x)),\(Int(last.y))\(zone != nil ? " (snapped)" : "")") }
+        if let window, var origin = zone?.origin, var size = zone?.size {
+            // Position, size, then position again — some apps clamp the first move.
+            if let p = AXValueCreate(.cgPoint, &origin), let sz = AXValueCreate(.cgSize, &size) {
+                AXUIElementSetAttributeValue(window, kAXPositionAttribute as CFString, p)
+                AXUIElementSetAttributeValue(window, kAXSizeAttribute as CFString, sz)
+                AXUIElementSetAttributeValue(window, kAXPositionAttribute as CFString, p)
+            }
+        }
+        zone = nil
+        overlay.hide()
         timer?.invalidate()
         timer = nil
         window = nil
@@ -122,11 +144,31 @@ final class AppState: ObservableObject {
     @Published var needsRelaunch = false
     @Published var launchAtLogin = false
     @Published var available: Set<Slot> = []
+    @Published var hapticsAvailable = false
+    @Published var hapticsOn = UserDefaults.standard.object(forKey: "hapticsOn") as? Bool ?? true {
+        didSet { UserDefaults.standard.set(hapticsOn, forKey: "hapticsOn"); applyFeel() }
+    }
+    @Published var hapticStrength = UserDefaults.standard.object(forKey: "hapticStrength") as? Int ?? 60 {
+        didSet { UserDefaults.standard.set(hapticStrength, forKey: "hapticStrength"); applyFeel() }
+    }
+    @Published var feelHover = UserDefaults.standard.object(forKey: "feelHover") as? Bool ?? true {
+        didSet { UserDefaults.standard.set(feelHover, forKey: "feelHover"); applyFeel() }
+    }
+    @Published var feelEdges = UserDefaults.standard.object(forKey: "feelEdges") as? Bool ?? true {
+        didSet { UserDefaults.standard.set(feelEdges, forKey: "feelEdges"); applyFeel() }
+    }
+    @Published var snapWindows = UserDefaults.standard.object(forKey: "snapWindows") as? Bool ?? true {
+        didSet { UserDefaults.standard.set(snapWindows, forKey: "snapWindows"); applyFeel() }
+    }
     @Published var directLink = false   // true when the mouse reports real press/hold/release
 
     let hid = HIDPP()
     let tap = ButtonTap()
     let dragger = WindowDragger()
+    let feeler = HoverFeeler()
+    private var wheelAcc = 0.0
+    private var wheelLast = Date.distantPast
+    private var wheelReady = Date.distantPast
     private var timer: Timer?
     private var keyMonitor: Any?
 
@@ -187,17 +229,28 @@ final class AppState: ObservableObject {
             self.dragger.end()
             return true
         }
+        tap.onThumbWheel = { [weak self] delta in self?.thumbWheel(delta) ?? false }
+        dragger.onZone = { [weak self] in self?.buzz(.edge) }
+        feeler.onLand = { [weak self] in
+            guard let self, !self.dragger.isDragging else { return }
+            self.buzz(.hover)
+        }
+        feeler.onCrossWindow = { [weak self] in
+            guard let self, !self.dragger.isDragging else { return }
+            self.buzz(.tick)
+        }
         if accessibilityOK { tap.start() }
 
         hid.onStatus = { [weak self] s in
             guard let self else { return }
             self.hidStatus = s
-            if s != .connected { self.directLink = false; self.stickyDrag = false; self.pressed = []; self.cidForSlot = [:]; self.slotForCID = [:]; self.updateAvailability() }
+            if s != .connected { self.hapticsAvailable = false; self.applyFeel(); self.directLink = false; self.stickyDrag = false; self.pressed = []; self.cidForSlot = [:]; self.slotForCID = [:]; self.updateAvailability() }
             if s == .connected { self.needsRelaunch = false }
         }
         hid.onDevice = { [weak self] name, controls in self?.deviceReady(name, controls) }
         hid.onButtons = { [weak self] cids in self?.buttons(cids) }
         hid.onRawXY = { [weak self] dx, dy in self?.rawXY(dx, dy) }
+        hid.onHaptics = { [weak self] ok in self?.hapticsAvailable = ok; self?.applyFeel() }
         hid.onBattery = { [weak self] p, c in self?.battery = p; self?.charging = c }
         hid.start()
         updateAvailability()
@@ -215,9 +268,14 @@ final class AppState: ObservableObject {
 
     private func tick() {
         refreshPermissions()
-        if accessibilityOK && !tap.isRunning { tap.start(); updateAvailability() }
-        if inputMonitoringOK && hidStatus == .notPermitted {
-            if grantRestarts < 2 { grantRestarts += 1; hid.restart() } else { needsRelaunch = true }
+        if accessibilityOK && !tap.isRunning { tap.start(); updateAvailability(); applyFeel() }
+        if hidStatus == .notPermitted {
+            // macOS sometimes refuses the first attempt right after launch, so keep trying quietly.
+            grantRestarts += 1
+            if grantRestarts <= 6 || grantRestarts % 5 == 0 { hid.restart() }
+            if inputMonitoringOK && grantRestarts > 4 { needsRelaunch = true }
+        } else {
+            grantRestarts = 0
         }
     }
 
@@ -260,6 +318,51 @@ final class AppState: ObservableObject {
         }
         launchAtLogin = SMAppService.mainApp.status == .enabled
         Log.write("launch at login: \(launchAtLogin)")
+    }
+
+    // MARK: Haptics and extras
+
+    /// Push the "feel" settings to wherever they take effect.
+    func applyFeel() {
+        dragger.snapEnabled = snapWindows
+        if hapticsOn && hapticsAvailable { hid.setHapticLevel(hapticStrength) }
+        feeler.configure(controls: feelHover, windows: feelEdges)
+        if hapticsOn && hapticsAvailable && (feelHover || feelEdges) && accessibilityOK { feeler.start() } else { feeler.stop() }
+    }
+
+    func buzz(_ wave: Wave) {
+        guard hapticsOn, hapticsAvailable else { return }
+        hid.haptic(wave.rawValue)
+    }
+
+    /// The thumb wheel was rolled. Returns true if we used the movement.
+    private func thumbWheel(_ delta: Double) -> Bool {
+        let mode = action(.thumbWheel).kind
+        let step: Double, pause: Double
+        switch mode {
+        case "wheelVolume": (step, pause) = (1.0, 0.0)
+        case "wheelZoom": (step, pause) = (2.0, 0.05)
+        case "wheelTabs": (step, pause) = (2.5, 0.12)
+        case "wheelUndo": (step, pause) = (2.5, 0.10)
+        case "wheelDesktops": (step, pause) = (4.0, 0.6)
+        default: return false
+        }
+        let now = Date()
+        if now.timeIntervalSince(wheelLast) > 0.35 { wheelAcc = 0 }
+        wheelLast = now
+        wheelAcc += delta
+        guard abs(wheelAcc) >= step, now >= wheelReady else { return true }
+        let forward = wheelAcc < 0
+        wheelAcc = 0
+        wheelReady = now.addingTimeInterval(pause)
+        switch mode {
+        case "wheelVolume": ActionRunner.media(forward ? 0 : 1)
+        case "wheelZoom": ActionRunner.key(forward ? 24 : 27, .command)
+        case "wheelTabs": ActionRunner.key(48, forward ? .control : [.control, .shift]); buzz(.tick)
+        case "wheelUndo": ActionRunner.key(6, forward ? [.command, .shift] : .command); buzz(.tick)
+        default: ActionRunner.key(forward ? 124 : 123, .control); buzz(.swipe)
+        }
+        return true
     }
 
     // MARK: Assignments
@@ -319,7 +422,7 @@ final class AppState: ObservableObject {
 
     private func updateAvailability() {
         var s = Set<Slot>()
-        if tap.isRunning { s.formUnion([.middle, .back, .forward, .gesture, .thumbPanel]) }
+        if tap.isRunning { s.formUnion([.middle, .back, .forward, .gesture, .thumbPanel, .thumbWheel]) }
         if hidStatus == .connected && accessibilityOK { s.formUnion(cidForSlot.keys) }
         available = s
     }
@@ -337,6 +440,7 @@ final class AppState: ObservableObject {
         } else {
             dragPressed = Date()
             dragger.begin()
+            if dragger.isDragging { buzz(.grab) }
         }
     }
 
@@ -349,6 +453,7 @@ final class AppState: ObservableObject {
             Log.write("drag: carrying until next click")
         } else {
             dragger.end()
+            buzz(.drop)
         }
     }
 
@@ -377,6 +482,7 @@ final class AppState: ObservableObject {
         let slot: Slot = abs(dx) > abs(dy) ? (dx > 0 ? .gestureRight : .gestureLeft) : (dy > 0 ? .gestureDown : .gestureUp)
         gestureFired = true
         ActionRunner.run(action(slot))
+        buzz(.swipe)
     }
 
     private func buttons(_ cids: Set<UInt16>) {
@@ -425,6 +531,7 @@ final class AppState: ObservableObject {
     }
 
     func shutdown() {
+        feeler.stop()
         dragger.end()
         hid.releaseAll()
     }

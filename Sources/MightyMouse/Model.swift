@@ -34,13 +34,13 @@ enum Log {
 // MARK: - Slots (things on the mouse you can assign)
 
 enum Slot: String, CaseIterable, Codable, Identifiable {
-    case middle, modeShift, gesture, forward, back, thumbPanel
+    case middle, modeShift, gesture, forward, back, thumbPanel, thumbWheel
     case gestureUp, gestureDown, gestureLeft, gestureRight
 
     var id: String { rawValue }
 
     /// The physical buttons shown on the mouse picture.
-    static let buttons: [Slot] = [.middle, .modeShift, .gesture, .forward, .back, .thumbPanel]
+    static let buttons: [Slot] = [.middle, .modeShift, .thumbWheel, .gesture, .forward, .back, .thumbPanel]
     static let gestureParts: [Slot] = [.gesture, .gestureUp, .gestureDown, .gestureLeft, .gestureRight]
 
     var isSwipe: Bool { [.gestureUp, .gestureDown, .gestureLeft, .gestureRight].contains(self) }
@@ -53,6 +53,7 @@ enum Slot: String, CaseIterable, Codable, Identifiable {
         case .forward: return "Forward button"
         case .back: return "Back button"
         case .thumbPanel: return "Haptic panel"
+        case .thumbWheel: return "Thumb wheel"
         case .gestureUp: return "Hold + move up"
         case .gestureDown: return "Hold + move down"
         case .gestureLeft: return "Hold + move left"
@@ -68,6 +69,7 @@ enum Slot: String, CaseIterable, Codable, Identifiable {
         case .forward: return "The front one of the two thumb buttons."
         case .back: return "The rear one of the two thumb buttons."
         case .thumbPanel: return "The pressable pad under your thumb. With “Drag the window”, point at any window, hold the pad and move the mouse; let go to drop it."
+        case .thumbWheel: return "The little wheel by your thumb. Out of the box it scrolls sideways."
         default: return ""
         }
     }
@@ -176,7 +178,28 @@ enum Catalog {
         ]),
     ]
 
-    static let byID: [String: Preset] = Dictionary(uniqueKeysWithValues: groups.flatMap { $0.presets }.map { ($0.id, $0) })
+    /// What the thumb wheel can do when it is rolled.
+    static let wheelModes: [Preset] = [
+        Preset(id: "default", title: "Scroll sideways", symbol: "arrow.left.and.right", effect: .passthrough),
+        Preset(id: "wheelVolume", title: "Volume", symbol: "speaker.wave.2", effect: .nothing),
+        Preset(id: "wheelTabs", title: "Switch tabs", symbol: "square.on.square", effect: .nothing),
+        Preset(id: "wheelZoom", title: "Zoom in and out", symbol: "plus.magnifyingglass", effect: .nothing),
+        Preset(id: "wheelDesktops", title: "Switch desktops", symbol: "rectangle.split.3x1", effect: .nothing),
+        Preset(id: "wheelUndo", title: "Undo and redo", symbol: "arrow.uturn.backward", effect: .nothing),
+    ]
+
+    static let byID: [String: Preset] = Dictionary(
+        (groups.flatMap { $0.presets } + wheelModes).map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+
+    static func title(_ a: Action, slot: Slot) -> String {
+        if slot == .thumbWheel { return wheelModes.first { $0.id == a.kind }?.title ?? "Scroll sideways" }
+        return title(a)
+    }
+
+    static func symbol(_ a: Action, slot: Slot) -> String {
+        if slot == .thumbWheel { return wheelModes.first { $0.id == a.kind }?.symbol ?? "arrow.left.and.right" }
+        return symbol(a)
+    }
 
     static func title(_ a: Action) -> String {
         switch a.kind {
@@ -231,6 +254,7 @@ enum ConfigStore {
         .middle: .standard,
         .modeShift: .standard,
         .thumbPanel: Action(kind: "dragWindow"),
+        .thumbWheel: .standard,
         .back: Action(kind: "back"),
         .forward: Action(kind: "forward"),
         .gesture: Action(kind: "missionControl"),

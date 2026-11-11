@@ -113,6 +113,8 @@ final class ButtonTap {
     /// Called for ordinary left/right clicks. Return true to swallow the click.
     var onPlainClick: (() -> Bool)?
     private var swallowUp = false
+    /// Called when the thumb wheel is rolled (amount in lines). Return true to swallow the scroll.
+    var onThumbWheel: ((Double) -> Bool)?
     private var tap: CFMachPort?
     private var source: CFRunLoopSource?
 
@@ -126,6 +128,7 @@ final class ButtonTap {
             | (1 << CGEventType.otherMouseDragged.rawValue)
             | (1 << CGEventType.leftMouseDown.rawValue) | (1 << CGEventType.leftMouseUp.rawValue)
             | (1 << CGEventType.rightMouseDown.rawValue) | (1 << CGEventType.rightMouseUp.rawValue)
+            | (1 << CGEventType.scrollWheel.rawValue)
         let ctx = Unmanaged.passUnretained(self).toOpaque()
         guard let port = CGEvent.tapCreate(
             tap: .cgSessionEventTap, place: .headInsertEventTap, options: .defaultTap,
@@ -149,6 +152,16 @@ final class ButtonTap {
             return Unmanaged.passUnretained(event)
         }
         if event.getIntegerValueField(.eventSourceUserData) == ActionRunner.marker {
+            return Unmanaged.passUnretained(event)
+        }
+        if type == .scrollWheel {
+            // A wheel (not a trackpad) scrolling purely sideways is the thumb wheel.
+            let sideways = event.getDoubleValueField(.scrollWheelEventFixedPtDeltaAxis2)
+            let vertical = event.getDoubleValueField(.scrollWheelEventFixedPtDeltaAxis1)
+            if event.getIntegerValueField(.scrollWheelEventIsContinuous) == 0, sideways != 0, vertical == 0,
+               !event.flags.contains(.maskShift), onThumbWheel?(sideways) ?? false {
+                return nil
+            }
             return Unmanaged.passUnretained(event)
         }
         if type == .leftMouseDown || type == .rightMouseDown {

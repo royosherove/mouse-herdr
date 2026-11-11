@@ -49,6 +49,7 @@ enum MouseArt {
     static func rect(_ slot: Slot) -> CGRect {
         switch slot {
         case .middle: return wheel
+        case .thumbWheel: return thumbWheel
         case .modeShift: return CGRect(x: 341, y: 172, width: 18, height: 28)
         case .gesture: return CGRect(x: 249, y: 174, width: 15, height: 28)
         case .forward: return CGRect(x: 248, y: 206, width: 15, height: 28)
@@ -61,9 +62,10 @@ enum MouseArt {
     /// Where each button's label sits, and which side of the mouse.
     static func chip(_ slot: Slot) -> (center: CGPoint, left: Bool) {
         switch slot {
-        case .gesture: return (CGPoint(x: 92, y: 120), true)
-        case .forward: return (CGPoint(x: 92, y: 192), true)
-        case .back: return (CGPoint(x: 92, y: 264), true)
+        case .thumbWheel: return (CGPoint(x: 92, y: 58), true)
+        case .gesture: return (CGPoint(x: 92, y: 126), true)
+        case .forward: return (CGPoint(x: 92, y: 194), true)
+        case .back: return (CGPoint(x: 92, y: 262), true)
         case .thumbPanel: return (CGPoint(x: 92, y: 372), true)
         case .middle: return (CGPoint(x: 568, y: 128), false)
         case .modeShift: return (CGPoint(x: 568, y: 204), false)
@@ -99,9 +101,6 @@ struct MouseView: View {
             MouseArt.body.stroke(Color.white.opacity(0.10), lineWidth: 1)
             MouseArt.seams.stroke(Color.black.opacity(0.45), style: StrokeStyle(lineWidth: 1.6, lineCap: .round))
 
-            // thumb wheel (not assignable, drawn for orientation)
-            ridged(MouseArt.thumbWheel, fill: Color(white: 0.5))
-
             ForEach(Slot.buttons) { slot in leader(slot) }
             ForEach(Slot.buttons) { slot in part(slot) }
             ForEach(Slot.buttons) { slot in chip(slot) }
@@ -134,7 +133,7 @@ struct MouseView: View {
         let on = isSelected(slot)
         let fill = on ? Palette.accent : Color(white: slot == .thumbPanel ? 0.30 : 0.56)
         Group {
-            if slot == .middle {
+            if slot == .middle || slot == .thumbWheel {
                 ridged(r, fill: fill)
             } else if slot == .thumbPanel {
                 RoundedRectangle(cornerRadius: 22, style: .continuous)
@@ -186,7 +185,7 @@ struct MouseView: View {
         let action = state.action(slot)
         return Button { state.selected = slot } label: {
             HStack(spacing: 9) {
-                Image(systemName: Catalog.symbol(action))
+                Image(systemName: Catalog.symbol(action, slot: slot))
                     .font(.system(size: 14, weight: .medium))
                     .foregroundStyle(on ? Palette.accent : .secondary)
                     .frame(width: 20)
@@ -194,7 +193,7 @@ struct MouseView: View {
                     Text(slot.title)
                         .font(.system(size: 10.5, weight: .medium))
                         .foregroundStyle(.secondary)
-                    Text(Catalog.title(action))
+                    Text(Catalog.title(action, slot: slot))
                         .font(.system(size: 12.5, weight: .semibold))
                         .foregroundStyle(.primary)
                         .lineLimit(1)

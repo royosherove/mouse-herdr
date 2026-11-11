@@ -40,11 +40,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             return
         }
 
-        // Only one copy should run.
+        // Developer aid: ask the running copy to play a haptic waveform.
+        if let i = args.firstIndex(of: "--buzz"), i + 1 < args.count {
+            DistributedNotificationCenter.default().postNotificationName(
+                .init("MightyMouse.buzz"), object: args[i + 1], userInfo: nil, deliverImmediately: true)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { NSApp.terminate(nil) }
+            return
+        }
+        DistributedNotificationCenter.default().addObserver(
+            forName: .init("MightyMouse.buzz"), object: nil, queue: .main
+        ) { [weak self] note in
+            if let s = note.object as? String, let id = UInt8(s) { self?.state.hid.haptic(id) }
+        }
+
+        // Only one copy should run (an older copy that is still shutting down doesn't count).
         if let id = Bundle.main.bundleIdentifier {
-            let others = NSRunningApplication.runningApplications(withBundleIdentifier: id)
-                .filter { $0.processIdentifier != ProcessInfo.processInfo.processIdentifier }
-            if !others.isEmpty {
+            func others() -> [NSRunningApplication] {
+                NSRunningApplication.runningApplications(withBundleIdentifier: id)
+                    .filter { $0.processIdentifier != ProcessInfo.processInfo.processIdentifier && !$0.isTerminated }
+            }
+            var tries = 0
+            while !others().isEmpty && tries < 8 { usleep(250_000); tries += 1 }
+            if !others().isEmpty {
                 DistributedNotificationCenter.default().post(name: .init("MightyMouse.show"), object: nil)
                 NSApp.terminate(nil)
                 return
@@ -129,8 +146,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         state.launchAtLogin = true
         state.available = Set(Slot.buttons)
         state.selected = slot
-        let host = NSHostingView(rootView: ContentView(state: state))
-        host.frame = NSRect(x: 0, y: 0, width: 1010, height: 690)
+        state.hapticsAvailable = true
+        let extras = CommandLine.arguments.contains("--extras")
+        if CommandLine.arguments.contains("--wheel") { state.selected = .thumbWheel }
+        let host: NSView = extras
+            ? NSHostingView(rootView: ExtrasView(state: state))
+            : NSHostingView(rootView: ContentView(state: state))
+        host.frame = extras ? NSRect(origin: .zero, size: host.fittingSize) : NSRect(x: 0, y: 0, width: 1010, height: 690)
         let w = NSWindow(contentRect: host.frame, styleMask: [.borderless], backing: .buffered, defer: false)
         w.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
         w.contentView = host
