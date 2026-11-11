@@ -112,9 +112,23 @@ final class AgentWatcher {
                 let ok = Self.run(app, ["do", "agent.focus", "{\"terminal\":\"\(agent.id)\"}"]) != nil
                 if !ok { Log.write("agents: herdr-app agent.focus failed") }
             }
+            // Bring the Herdr window forward. Going through Launch Services works even though
+            // MightyMouse itself is a background app; a plain activate() request gets ignored.
             DispatchQueue.main.async {
-                if let herdr = NSRunningApplication.runningApplications(withBundleIdentifier: "dev.herdr.app").first {
-                    herdr.activate(options: [.activateAllWindows])
+                guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "dev.herdr.app") else {
+                    Log.write("agents: Herdr app not found")
+                    return
+                }
+                let config = NSWorkspace.OpenConfiguration()
+                config.activates = true
+                NSWorkspace.shared.openApplication(at: url, configuration: config) { app, error in
+                    if let error { Log.write("agents: could not bring Herdr forward: \(error.localizedDescription)") }
+                    else {
+                        DispatchQueue.main.async {
+                            app?.activate(options: [.activateAllWindows])
+                            if let w = app, w.isHidden { w.unhide() }
+                        }
+                    }
                 }
             }
         }
