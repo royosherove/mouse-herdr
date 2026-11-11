@@ -160,10 +160,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         setupStatusItem()
         state.start()
 
-        let launchedAtLogin = NSAppleEventManager.shared().currentAppleEvent?
-            .paramDescriptor(forKeyword: keyAEPropData)?.enumCodeValue == keyAELaunchedAsLogInItem
-        let needsSetup = !state.accessibilityOK || !state.inputMonitoringOK
-        if !launchedAtLogin || needsSetup || args.contains("--show") { showWindow() }
+        // Start quietly in the menu bar. The window opens by itself only the first time,
+        // or when a permission still needs granting.
+        let defaults = UserDefaults.standard
+        let firstRun = !defaults.bool(forKey: "didFirstRun")
+        if firstRun || !state.accessibilityOK || args.contains("--show") {
+            defaults.set(true, forKey: "didFirstRun")
+            showWindow()
+        } else if !defaults.bool(forKey: "didExplainMenuBar") {
+            // The first quiet start: point out where the app went, once.
+            defaults.set(true, forKey: "didExplainMenuBar")
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [weak self] in self?.explainMenuBar() }
+        }
+    }
+
+    private var notice: NSPopover?
+
+    private func explainMenuBar() {
+        guard let button = statusItem?.button else { return }
+        let pop = NSPopover()
+        pop.behavior = .applicationDefined
+        pop.contentViewController = NSHostingController(rootView: MenuBarNotice { [weak self] in
+            self?.notice?.close()
+            self?.notice = nil
+        })
+        pop.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+        notice = pop
+        DispatchQueue.main.asyncAfter(deadline: .now() + 20) { [weak self] in
+            self?.notice?.close()
+            self?.notice = nil
+        }
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
@@ -245,5 +271,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         guard let rep = host.bitmapImageRepForCachingDisplay(in: host.bounds) else { return }
         host.cacheDisplay(in: host.bounds, to: rep)
         try? rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: path))
+    }
+}
+
+/// Shown once, the first time the app starts without opening its window.
+struct MenuBarNotice: View {
+    let dismiss: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                Image(systemName: "computermouse.fill").font(.system(size: 18)).foregroundStyle(Palette.accent)
+                Text("MightyMouse is running").font(.system(size: 14, weight: .bold, design: .rounded))
+            }
+            Text("It now starts quietly and lives here in the menu bar. Click this mouse icon whenever you want to change what your buttons do.")
+                .font(.system(size: 12)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            HStack {
+                Spacer()
+                Button("Got it", action: dismiss).buttonStyle(.borderedProminent).tint(Palette.accent).controlSize(.small)
+            }
+        }
+        .padding(14)
+        .frame(width: 290)
     }
 }

@@ -3,6 +3,11 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
+# The app's identifier. macOS ties permissions and settings to it, so keep it stable once chosen.
+# Put BUNDLE_ID=your.own.id in local.env (not committed) to use your own.
+[ -f local.env ] && source local.env
+BUNDLE_ID="${BUNDLE_ID:-dev.mightymouse.app}"
+
 APP="dist/MightyMouse.app"
 swift build -c release 2>&1 | grep -E "error|warning: unre|Compiling|Build complete" || true
 BIN=".build/release/MightyMouse"
@@ -21,14 +26,14 @@ done
 iconutil -c icns "$ICONSET" -o "$APP/Contents/Resources/AppIcon.icns"
 rm -rf "$ICONSET" dist/icon.png
 
-cat > "$APP/Contents/Info.plist" <<'EOF'
+cat > "$APP/Contents/Info.plist" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
   <key>CFBundleName</key><string>MightyMouse</string>
   <key>CFBundleDisplayName</key><string>MightyMouse</string>
-  <key>CFBundleIdentifier</key><string>com.osherove.mightymouse</string>
+  <key>CFBundleIdentifier</key><string>${BUNDLE_ID}</string>
   <key>CFBundleExecutable</key><string>MightyMouse</string>
   <key>CFBundleIconFile</key><string>AppIcon</string>
   <key>CFBundlePackageType</key><string>APPL</string>
@@ -61,7 +66,7 @@ fi
 security list-keychains -d user | grep -q "$KC" || \
   security list-keychains -d user -s $(security list-keychains -d user | tr -d '"') "$KC"
 security unlock-keychain -p mightymouse "$KC"
-codesign --force --keychain "$KC" --sign "MightyMouse Local Signing" --identifier com.osherove.mightymouse "$APP"
+codesign --force --keychain "$KC" --sign "MightyMouse Local Signing" --identifier "$BUNDLE_ID" "$APP"
 echo "built $APP"
 
 if [ "${1:-}" = "install" ]; then
