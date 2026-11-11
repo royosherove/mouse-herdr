@@ -52,7 +52,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 }]))
             }
             model.layout(list)
-            model.highlighted = model.placed.dropFirst(3).first?.id
+            model.highlighted = model.slices.dropFirst(3).first?.id
             let view = ZStack { Color(white: 0.55); RingView(model: model) }.frame(width: RingView.side, height: RingView.side)
             let r = ImageRenderer(content: view)
             r.scale = 1.5
@@ -81,6 +81,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             forName: .init("MightyMouse.buzz"), object: nil, queue: .main
         ) { [weak self] note in
             if let s = note.object as? String, let id = UInt8(s) { self?.state.hid.haptic(id) }
+        }
+
+        // Developer aid: ask the running copy to jump to an agent, as the ring would.
+        if let i = args.firstIndex(of: "--focus"), i + 1 < args.count {
+            DistributedNotificationCenter.default().postNotificationName(
+                .init("MightyMouse.focus"), object: args[i + 1], userInfo: nil, deliverImmediately: true)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { NSApp.terminate(nil) }
+            return
+        }
+        DistributedNotificationCenter.default().addObserver(
+            forName: .init("MightyMouse.focus"), object: nil, queue: .main
+        ) { [weak self] note in
+            guard let id = note.object as? String else { return }
+            self?.state.agents.focus(AgentInfo(id: id, agent: "", status: "", space: "test", tab: ""))
         }
 
         // Only one copy should run (an older copy that is still shutting down doesn't count).

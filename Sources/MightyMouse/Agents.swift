@@ -138,116 +138,200 @@ final class AgentWatcher {
 // MARK: - The ring
 
 final class RingModel: ObservableObject {
-    struct Placed: Identifiable {
+    /// One wedge of the wheel. Angles are radians, 0 pointing right, growing clockwise on screen.
+    struct Slice: Identifiable {
         let agent: AgentInfo
-        let offset: CGSize       // from the ring's centre, y down
+        let start: Double
+        let end: Double
+        let inner: CGFloat
+        let outer: CGFloat
         var id: String { agent.id }
+        var mid: Double { (start + end) / 2 }
     }
 
-    @Published var placed: [Placed] = []
+    @Published var slices: [Slice] = []
     @Published var highlighted: String?
     @Published var hidden = 0
-    var outerRadius: CGFloat = 200
+    var outerRadius: CGFloat = 250
 
     func layout(_ agents: [AgentInfo]) {
         let urgent = agents.filter { $0.needsYou }
-        var others = agents.filter { !$0.needsYou }
-        hidden = max(0, others.count - 12)
-        others = Array(others.prefix(12))
-        var result: [Placed] = []
-        // Agents waiting on you sit on the inner ring, closest to the pointer.
-        let inner: CGFloat = urgent.count > 3 ? 118 : 98
-        result += Self.circle(urgent, radius: urgent.count == 1 ? 86 : inner)
-        let outer: CGFloat = urgent.isEmpty ? (others.count > 8 ? 190 : 150) : (others.count > 8 ? 235 : 215)
-        result += Self.circle(others, radius: outer)
-        outerRadius = others.isEmpty ? inner : outer
-        placed = result
+        let rest = agents.filter { !$0.needsYou }
+        hidden = max(0, rest.count - 12)
+        let all = urgent + rest.prefix(12)
+        outerRadius = all.count > 9 ? 300 : (all.count > 6 ? 275 : 250)
+        guard !all.isEmpty else { slices = []; highlighted = nil; return }
+
+        // Agents waiting on you get wider wedges that also reach further in, so they are the closest targets.
+        let weights = all.map { $0.needsYou ? 1.45 : 1.0 }
+        let unit = min(2 * Double.pi / weights.reduce(0, +), 2 * Double.pi / 3.2)
+        let spans = weights.map { $0 * unit }
+        let used = spans.reduce(0, +)
+        let full = used > 2 * Double.pi - 0.001
+        // Start so the first wedge (or the whole group, when it doesn't fill the circle) is centred at the top.
+        var angle = -Double.pi / 2 - (full ? spans[0] / 2 : used / 2)
+        var result: [Slice] = []
+        for (a, span) in zip(all, spans) {
+            result.append(Slice(agent: a, start: angle, end: angle + span,
+                                inner: a.needsYou ? 60 : 96, outer: a.needsYou ? outerRadius + 16 : outerRadius))
+            angle += span
+        }
+        slices = result
         if let h = highlighted, !result.contains(where: { $0.id == h }) { highlighted = nil }
     }
 
-    private static func circle(_ agents: [AgentInfo], radius: CGFloat) -> [Placed] {
-        guard !agents.isEmpty else { return [] }
-        return agents.enumerated().map { i, a in
-            let angle = -CGFloat.pi / 2 + 2 * .pi * CGFloat(i) / CGFloat(agents.count)
-            // Stretch sideways a little: chips are wider than they are tall.
-            return Placed(agent: a, offset: CGSize(width: cos(angle) * radius * 1.18, height: sin(angle) * radius))
-        }
-    }
-
-    /// The agent the pointer is aiming at, given its offset from the centre.
+    /// The agent the pointer is aiming at, given its offset from the centre (y down).
     func target(for p: CGSize) -> String? {
-        guard hypot(p.width, p.height) > 34 else { return nil }
-        let best = placed.min { a, b in
-            hypot(a.offset.width - p.width, a.offset.height - p.height) < hypot(b.offset.width - p.width, b.offset.height - p.height)
+        guard hypot(p.width, p.height) > 46 else { return nil }
+        let angle = atan2(Double(p.height), Double(p.width))
+        for s in slices {
+            var d = (angle - s.start).truncatingRemainder(dividingBy: 2 * .pi)
+            if d < 0 { d += 2 * .pi }
+            if d < s.end - s.start { return s.id }
         }
-        guard let best, hypot(best.offset.width - p.width, best.offset.height - p.height) < 120 else { return nil }
-        return best.id
+        return nil
+    }
+}
+
+/// A pie wedge between two radii, with a small gap to its neighbours.
+struct Wedge: Shape {
+    var start: Double
+    var end: Double
+    var inner: CGFloat
+    var outer: CGFloat
+    var gap: CGFloat = 3.5
+
+    func path(in rect: CGRect) -> Path {
+        let c = CGPoint(x: rect.midX, y: rect.midY)
+        let po = Double(gap / outer), pi = Double(gap / inner)
+        var p = Path()
+        p.addArc(center: c, radius: outer, startAngle: .radians(start + po), endAngle: .radians(end - po), clockwise: false)
+        p.addArc(center: c, radius: inner, startAngle: .radians(end - pi), endAngle: .radians(start + pi), clockwise: true)
+        p.closeSubpath()
+        return p
     }
 }
 
 struct RingView: View {
     @ObservedObject var model: RingModel
-    static let side: CGFloat = 760
+    static let side: CGFloat = 800
 
     var body: some View {
-        ZStack {
-            Circle()
-                .fill(RadialGradient(colors: [Color.black.opacity(0.62), Color.black.opacity(0.40), .clear],
-                                     center: .center, startRadius: 30, endRadius: model.outerRadius * 1.18 + 120))
-            centre
-            ForEach(model.placed) { item in
-                chip(item.agent, on: model.highlighted == item.id)
-                    .offset(item.offset)
+        TimelineView(.animation(minimumInterval: 1.0 / 30.0)) { timeline in
+            let t = timeline.date.timeIntervalSinceReferenceDate
+            ZStack {
+                Circle()
+                    .fill(RadialGradient(colors: [Color.black.opacity(0.50), Color.black.opacity(0.30), .clear],
+                                         center: .center, startRadius: 40, endRadius: model.outerRadius + 90))
+                ForEach(model.slices) { s in
+                    slice(s, on: model.highlighted == s.id, t: t)
+                }
+                hub
             }
+            .frame(width: Self.side, height: Self.side)
         }
-        .frame(width: Self.side, height: Self.side)
-        .animation(.easeOut(duration: 0.12), value: model.highlighted)
+        .animation(.spring(response: 0.22, dampingFraction: 0.72), value: model.highlighted)
     }
 
-    private var centre: some View {
-        let waiting = model.placed.filter { $0.agent.needsYou }.count
-        let focus = model.placed.first { $0.id == model.highlighted }?.agent
-        return VStack(spacing: 2) {
-            if model.placed.isEmpty {
+    // MARK: Wedges
+
+    private func slice(_ s: RingModel.Slice, on: Bool, t: Double) -> some View {
+        let a = s.agent, urgent = a.needsYou
+        let pulse = 0.5 + 0.5 * sin(t * 4.2)
+        let pop: CGFloat = on ? 16 : (urgent ? CGFloat(3 * pulse) : 0)
+        let shape = Wedge(start: s.start, end: s.end, inner: s.inner, outer: s.outer)
+        let rim = Wedge(start: s.start, end: s.end, inner: s.outer - 7, outer: s.outer)
+        let fill: AnyShapeStyle = urgent
+            ? AnyShapeStyle(RadialGradient(colors: [Color(red: 1.0, green: 0.62, blue: 0.40), Palette.accent, Color(red: 0.93, green: 0.30, blue: 0.30)],
+                                           center: .center, startRadius: s.inner, endRadius: s.outer))
+            : AnyShapeStyle(RadialGradient(colors: [Color(white: on ? 0.36 : 0.20), Color(white: on ? 0.26 : 0.11)],
+                                           center: .center, startRadius: s.inner, endRadius: s.outer))
+        let radius = s.inner + (s.outer - s.inner) * 0.54
+        let arcWidth = CGFloat(s.end - s.start) * radius
+        return ZStack {
+            shape.fill(fill).opacity(urgent ? 1 : 0.95)
+            if !urgent {
+                rim.fill(a.color).opacity(a.status == "working" ? 0.55 + 0.45 * pulse : 0.9)
+            }
+            shape.stroke(on ? Color.white : Color.white.opacity(urgent ? 0.5 : 0.10), lineWidth: on ? 3 : 1)
+            label(a, on: on, t: t, width: max(64, min(150, arcWidth - 26)))
+                .offset(x: CGFloat(cos(s.mid)) * radius, y: CGFloat(sin(s.mid)) * radius)
+        }
+        .shadow(color: urgent ? Palette.accent.opacity(0.45 + 0.4 * pulse) : .black.opacity(0.35), radius: urgent ? 16 : 6)
+        .offset(x: CGFloat(cos(s.mid)) * pop, y: CGFloat(sin(s.mid)) * pop)
+    }
+
+    private func label(_ a: AgentInfo, on: Bool, t: Double, width: CGFloat) -> some View {
+        let urgent = a.needsYou
+        return VStack(spacing: 3) {
+            icon(a, t: t)
+                .font(.system(size: urgent ? 30 : 25, weight: .semibold))
+                .foregroundStyle(urgent ? Color.white : a.color)
+                .frame(height: urgent ? 36 : 30)
+            Text(a.space)
+                .font(.system(size: urgent ? 15.5 : 14, weight: .bold, design: .rounded))
+                .lineLimit(1).truncationMode(.middle)
+            Text(a.tab.isEmpty ? a.statusWord : "\(a.tab) · \(a.statusWord)")
+                .font(.system(size: 11.5, weight: .medium)).opacity(0.82).lineLimit(1)
+        }
+        .foregroundStyle(.white)
+        .frame(width: width)
+        .scaleEffect(on ? 1.08 : 1)
+    }
+
+    /// A little moving picture of what the agent is doing.
+    @ViewBuilder
+    private func icon(_ a: AgentInfo, t: Double) -> some View {
+        switch a.status {
+        case "working":
+            Image(systemName: "gearshape.fill")
+                .rotationEffect(.degrees((t * 150).truncatingRemainder(dividingBy: 360)))
+        case "blocked":
+            Image(systemName: "hand.raised.fill")
+                .rotationEffect(.degrees(12 * sin(t * 6)), anchor: .bottom)
+                .scaleEffect(1 + 0.08 * sin(t * 6))
+        case "error":
+            Image(systemName: "exclamationmark.triangle.fill")
+                .opacity(0.6 + 0.4 * abs(sin(t * 5)))
+        case "done":
+            Image(systemName: "checkmark.circle.fill")
+        case "idle":
+            Image(systemName: "moon.zzz.fill")
+                .offset(y: CGFloat(2 * sin(t * 1.6)))
+        default:
+            Image(systemName: "terminal.fill")
+        }
+    }
+
+    // MARK: Hub
+
+    private var hub: some View {
+        let waiting = model.slices.filter { $0.agent.needsYou }.count
+        let focus = model.slices.first { $0.id == model.highlighted }?.agent
+        return VStack(spacing: 1) {
+            if model.slices.isEmpty {
                 Text("No agents").font(.system(size: 13, weight: .semibold))
                 Text("running").font(.system(size: 11)).opacity(0.7)
             } else if let focus {
-                Text(focus.statusWord).font(.system(size: 12, weight: .bold)).foregroundStyle(focus.color)
-                Text(focus.agent).font(.system(size: 10.5)).opacity(0.75)
+                Text(focus.statusWord).font(.system(size: 13, weight: .bold, design: .rounded)).foregroundStyle(focus.needsYou ? Palette.accent : focus.color)
+                Text(focus.agent).font(.system(size: 10.5)).opacity(0.75).lineLimit(1)
+                Text("click to open").font(.system(size: 9.5)).opacity(0.5)
             } else if waiting > 0 {
-                Text("\(waiting)").font(.system(size: 22, weight: .bold, design: .rounded)).foregroundStyle(Palette.accent)
+                Text("\(waiting)").font(.system(size: 26, weight: .bold, design: .rounded)).foregroundStyle(Palette.accent)
                 Text(waiting == 1 ? "needs you" : "need you").font(.system(size: 10.5)).opacity(0.8)
             } else {
-                Text("\(model.placed.count + model.hidden)").font(.system(size: 22, weight: .bold, design: .rounded))
+                Text("\(model.slices.count + model.hidden)").font(.system(size: 26, weight: .bold, design: .rounded))
                 Text("agents").font(.system(size: 10.5)).opacity(0.8)
             }
-        }
-        .foregroundStyle(.white)
-        .frame(width: 66, height: 66)
-        .background(Circle().fill(Color(white: 0.12).opacity(0.92)))
-        .overlay(Circle().stroke(Color.white.opacity(0.16), lineWidth: 1))
-    }
-
-    private func chip(_ a: AgentInfo, on: Bool) -> some View {
-        let urgent = a.needsYou
-        return HStack(spacing: 8) {
-            Circle().fill(urgent ? Color.white : a.color).frame(width: 9, height: 9)
-            VStack(alignment: .leading, spacing: 0) {
-                Text(a.space).font(.system(size: urgent ? 13.5 : 12.5, weight: .semibold)).lineLimit(1)
-                Text(a.tab.isEmpty ? a.statusWord : "\(a.tab) · \(a.statusWord)")
-                    .font(.system(size: 10.5)).opacity(0.8).lineLimit(1)
+            if model.hidden > 0 && focus == nil {
+                Text("+\(model.hidden) more").font(.system(size: 9.5)).opacity(0.55)
             }
-            Spacer(minLength: 0)
         }
         .foregroundStyle(.white)
-        .padding(.horizontal, 12)
-        .frame(width: urgent ? 158 : 138, height: urgent ? 48 : 40)
-        .background(
-            Capsule().fill(urgent ? AnyShapeStyle(Palette.accent) : AnyShapeStyle(Color(white: on ? 0.30 : 0.16).opacity(0.95)))
-        )
-        .overlay(Capsule().stroke(on ? Color.white : (urgent ? Color.white.opacity(0.45) : a.color.opacity(0.55)), lineWidth: on ? 2.2 : 1))
-        .shadow(color: urgent ? Palette.accent.opacity(0.75) : .black.opacity(0.35), radius: urgent ? 12 : 5)
-        .scaleEffect(on ? 1.10 : 1)
+        .frame(width: 88, height: 88)
+        .background(Circle().fill(RadialGradient(colors: [Color(white: 0.22), Color(white: 0.08)], center: .top, startRadius: 4, endRadius: 90)))
+        .overlay(Circle().stroke(Color.white.opacity(0.22), lineWidth: 1.5))
+        .shadow(color: .black.opacity(0.5), radius: 10)
     }
 }
 
@@ -270,9 +354,9 @@ final class AgentRing {
         var origin = CGPoint(x: mouse.x - side / 2, y: mouse.y - side / 2)
         // Keep the ring's busy middle on screen.
         if let screen = NSScreen.screens.first(where: { NSMouseInRect(mouse, $0.frame, false) }) {
-            let v = screen.visibleFrame, margin: CGFloat = 250
+            let v = screen.visibleFrame, margin: CGFloat = 300
             let cx = min(max(mouse.x, v.minX + margin), v.maxX - margin)
-            let cy = min(max(mouse.y, v.minY + margin * 0.8), v.maxY - margin * 0.8)
+            let cy = min(max(mouse.y, v.minY + margin), v.maxY - margin)
             origin = CGPoint(x: cx - side / 2, y: cy - side / 2)
         }
         let primaryHeight = NSScreen.screens.first?.frame.height ?? 0
@@ -309,7 +393,7 @@ final class AgentRing {
     private func track() {
         guard let m = CGEvent(source: nil)?.location else { return }
         let rel = CGSize(width: m.x - centre.x, height: m.y - centre.y)
-        if hypot(rel.width, rel.height) > model.outerRadius * 1.18 + 190 { close(); return }
+        if hypot(rel.width, rel.height) > model.outerRadius + 200 { close(); return }
         let aim = model.target(for: rel)
         if aim != model.highlighted {
             model.highlighted = aim
@@ -319,7 +403,7 @@ final class AgentRing {
 
     /// Pick whatever is aimed at (or just close when nothing is).
     func choose() {
-        let picked = model.placed.first { $0.id == model.highlighted }?.agent
+        let picked = model.slices.first { $0.id == model.highlighted }?.agent
         close()
         if let picked { onChoose?(picked) }
     }
