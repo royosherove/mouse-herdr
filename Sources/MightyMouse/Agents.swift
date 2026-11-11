@@ -670,6 +670,8 @@ final class AgentRing {
     /// The person wants to type their own answer; the point is where to put the text box (Cocoa screen coordinates).
     var onType: ((AgentInfo, CGPoint) -> Void)?
     private var lastQuestion = ""
+    private var pointerOnWheel = false     // the pointer is over a wedge right now
+    private var pointerOnBubble = false
     private var expandedFor: String?           // agent whose bubble is showing its whole question
     private var anchor: (x: CGFloat, bottom: CGFloat)?   // keeps the answer buttons still while it grows
     private var panel: NSPanel?
@@ -680,6 +682,8 @@ final class AgentRing {
 
     func show(_ agents: [AgentInfo]) {
         model.highlighted = nil
+        pointerOnWheel = false
+        pointerOnBubble = false
         expandedFor = nil
         anchor = nil
         model.hoveredOption = nil
@@ -760,6 +764,8 @@ final class AgentRing {
             model.hoveredOption = option
             if option != nil { onAim?() }
         }
+        pointerOnBubble = overBubble
+        pointerOnWheel = r <= model.outerRadius + 22 && model.target(for: rel) != nil
         if !overBubble && r > model.outerRadius + 330 { close(); return }
 
         // Which wedge is aimed at only changes while the pointer is on the wheel itself,
@@ -842,8 +848,11 @@ final class AgentRing {
             onAnswer?(picked, option)
             return
         }
+        // A click on the bubble itself (not on a button) does nothing.
+        if pointerOnBubble && !pointerOnWheel { return }
         close()
-        if let picked { onChoose?(picked) }
+        // Only a click on a wedge opens that agent; clicking anywhere else just dismisses the wheel.
+        if pointerOnWheel, let picked { onChoose?(picked) }
     }
 
     func close() {
