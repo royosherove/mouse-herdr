@@ -41,24 +41,23 @@ APP="dist/MouseHerdr.app"
 swift build -c release
 BIN="$(swift build -c release --show-bin-path)/MouseHerdr"
 [ -x "$BIN" ] || { echo "Build did not produce MouseHerdr." >&2; exit 1; }
+ICON="Resources/AppIcon.png"
+[ -s "$ICON" ] || { echo "Missing $ICON. Restore it from the repository." >&2; exit 1; }
 
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN" "$APP/Contents/MacOS/MouseHerdr"
 
-# Icon
+# Use tracked artwork so packaging works without a Metal-capable graphics device.
 ICONSET="dist/AppIcon.iconset"
 rm -rf "$ICONSET"
-rm -f dist/icon.png
 mkdir -p "$ICONSET"
-"$BIN" --icon dist/icon.png
-[ -s dist/icon.png ] || { echo "Could not render the app icon." >&2; exit 1; }
 for s in 16 32 128 256 512; do
-  sips -z $s $s dist/icon.png --out "$ICONSET/icon_${s}x${s}.png" >/dev/null
-  sips -z $((s*2)) $((s*2)) dist/icon.png --out "$ICONSET/icon_${s}x${s}@2x.png" >/dev/null
+  sips -z $s $s "$ICON" --out "$ICONSET/icon_${s}x${s}.png" >/dev/null
+  sips -z $((s*2)) $((s*2)) "$ICON" --out "$ICONSET/icon_${s}x${s}@2x.png" >/dev/null
 done
 iconutil -c icns "$ICONSET" -o "$APP/Contents/Resources/AppIcon.icns"
-rm -rf "$ICONSET" dist/icon.png
+rm -rf "$ICONSET"
 
 cat > "$APP/Contents/Info.plist" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>

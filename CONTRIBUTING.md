@@ -56,6 +56,21 @@ dist/MouseHerdr.app/Contents/MacOS/MouseHerdr --snapshot-ring /tmp/mouseherdr-no
 Avoid `--live` for public screenshots unless you have reviewed all visible session data.
 Review window snapshots too: they can use your saved button assignments and app paths.
 
+## App icon
+
+Builds use the tracked `Resources/AppIcon.png`, so packaging works on machines without a
+Metal-capable graphics device. After editing `IconView` in `ContentView.swift`, regenerate
+the artwork on a desktop Mac:
+
+```bash
+swift build -c release
+"$(swift build -c release --show-bin-path)/MouseHerdr" --icon Resources/AppIcon.png
+./build.sh
+```
+
+Commit the updated PNG with the drawing changes. The `--icon` and snapshot developer
+commands use SwiftUI rendering and need a working graphics session.
+
 ## Keep contributions portable
 
 Keep changes focused and describe the user-visible behavior and validation in the pull
