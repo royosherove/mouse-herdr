@@ -50,12 +50,12 @@ Everything optional has a switch under **Haptics & extras** in the window.
 ## Requirements
 
 - macOS 13 or later (developed and tested on macOS 26, Apple silicon)
-- Xcode command line tools (Swift 5.9 or later) to build
+- Xcode command line tools (Swift 5.9 or later), only when building from source
 - A Logitech MX Master 4 connected over **Bluetooth**
 
 There are no third-party Swift packages, required accounts, or API keys. Herdr is only
-needed for the optional coding-agent features. Intel Macs can build from source, but
-mouse hardware testing has been on Apple silicon.
+needed for the optional coding-agent features. Release downloads run on Apple silicon
+and Intel; mouse hardware testing has been on Apple silicon.
 
 The Logi Bolt USB receiver is not supported. Other Logitech Bluetooth mice that expose the
 same HID++ interface fall back to a "Generic mouse" with only the wheel click, back and
@@ -64,23 +64,31 @@ one its own picture and buttons.
 
 ## Install
 
-There are two ways to get it. Building from source is the better one for everyday use,
-because macOS then keeps your permissions when you update.
+[Download the latest Mac app](https://github.com/royosherove/mouse-herdr/releases/latest/download/MouseHerdr.zip),
+or [build from source](#build-from-source).
 
 ### Download a release
 
-Every change merged to `main` is built and published automatically on the
-[Releases](https://github.com/royosherove/mouse-herdr/releases) page, as one app for both
-Apple silicon and Intel.
+Changes to the app or its build inputs are published after CI passes on `main`.
+Documentation, tests, and CI-only changes do not create new releases.
+Each [release](https://github.com/royosherove/mouse-herdr/releases/latest) contains one app
+for both Apple silicon and Intel.
 
-1. Download the latest `MouseHerdr-<version>.zip`, unzip it and move MouseHerdr to
-   Applications.
-2. The download is not notarized by Apple, so clear the download flag once before opening:
-   `xattr -dr com.apple.quarantine /Applications/MouseHerdr.app`
-3. Open it and allow the two permissions described below.
+1. Download **MouseHerdr.zip** using the link above and unzip it.
+2. Quit any running MouseHerdr, then drag **MouseHerdr.app** to **Applications**. Replace
+   the older copy if you are updating; your assignments remain saved.
+3. Open MouseHerdr from Applications. If macOS blocks it, go to **System Settings →
+   Privacy & Security**, find MouseHerdr under Security, and choose **Open Anyway**.
+4. [Grant **Accessibility** and **Input Monitoring**](#grant-permissions), then quit and
+   reopen MouseHerdr.
 
-Release builds are signed without a certificate. macOS therefore treats each new version as
-a different app and asks for the permissions again after every update.
+These downloads are ad-hoc signed and **not notarized by Apple**. The Open Anyway step
+allows this particular app. Updates may require granting the permissions again; remove
+and re-add the Applications copy if necessary. Building from source creates a stable local
+signing identity that you can keep across updates.
+
+To check a download, save `MouseHerdr.zip.sha256` from the same release beside the ZIP,
+then run `shasum -a 256 -c MouseHerdr.zip.sha256` in that directory.
 
 ### Build from source
 
@@ -104,8 +112,10 @@ You can turn off **Start MouseHerdr when I log in** in the window. Run the build
 normal user, without `sudo`; if Applications needs administrator approval, copy
 `dist/MouseHerdr.app` there with Finder and open it.
 
-Installation is from source and uses a local signing identity. An Apple Developer account
-is not required. This does not produce an Apple-notarized app for redistribution.
+Source builds use a local signing identity. An Apple Developer account is not required.
+This does not produce an Apple-notarized app for redistribution.
+
+### Grant permissions
 
 In the app's setup panel, grant these two permissions under **System Settings → Privacy
 & Security**:
@@ -139,7 +149,7 @@ MouseHerdr rechecks while it runs, so installing or starting Herdr does not need
 MouseHerdr restart. To use MouseHerdr without Herdr, turn off the agent ring and agent
 haptics in that panel; the mouse controls, window dragging and other haptics work separately.
 
-### Update
+### Update a source build
 
 Keep the same checkout and its `signing/` directory, then run:
 

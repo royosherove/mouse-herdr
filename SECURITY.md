@@ -30,6 +30,10 @@ keychain, share its private key, or distribute it with source archives. Use
 Scan the complete Git history as well as the current files for secrets, review screenshots,
 and verify a clean source build. The tracked `.gitignore` excludes local signing material,
 environment files and build outputs. Keep those files excluded when adding future
-packaging or release automation. Published binary releases need a separate distribution
-signing and notarization process; the current build script is for local source installs.
+packaging or release automation. The release workflow uses ad-hoc signing and publishes a
+universal app ZIP with a SHA-256 checksum. These downloads are not notarized by Apple;
+macOS can require **Open Anyway** and renewed privacy permissions after updates. Local
+source builds retain a separate development signing identity in the user's checkout.
+Developer ID signing and notarization would require a distribution certificate and
+Apple notarization credentials, which must never be committed or included in downloads.
 Enable GitHub's private vulnerability reporting when the repository becomes public.

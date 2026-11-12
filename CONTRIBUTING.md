@@ -10,6 +10,7 @@ Use macOS and Swift 5.9 or newer. From the repository:
 
 ```bash
 swift test
+python3 scripts/test_release.py
 SIGNING=adhoc ./build.sh
 MOUSEHERDR_TEST_BINARY=dist/MouseHerdr.app/Contents/MacOS/MouseHerdr python3 scripts/test_setup.py
 ```
@@ -27,10 +28,23 @@ signing as described in the [README](README.md).
 
 ## Releases
 
-When a change lands on `main` and CI passes, the Release workflow builds a universal app,
-zips it and publishes a GitHub release. The version is the contents of the `VERSION` file
-followed by the number of commits on `main` (for example `1.0.42`); raise `VERSION` for a
-new major or minor version. The workflow can also be run by hand from the Actions tab.
+After CI passes for a push to `main`, the Release workflow compares the app with the last
+published release. Changes under `Sources/` or `Resources/`, or to `Package.swift`,
+`Package.resolved`, `build.sh`, or `VERSION`, qualify. Markdown and other documentation
+edits, tests, and CI-only changes do not publish. The comparison covers all unreleased
+commits, so a documentation commit after a code change does not hide that change.
+
+The workflow builds one universal app, verifies both architectures and the extracted
+ZIP's signature, runs the setup checks against the extracted app, then publishes
+`MouseHerdr.zip` and its SHA-256 checksum. The asset filename stays constant so the
+README's latest-download link keeps working.
+
+The version is the contents of `VERSION` followed by the total commit count on `main`
+(for example `1.0.42`). Keep `VERSION` in `major.minor` form; raise it for a new major or
+minor version, or to release a packaging workflow change that otherwise has no app changes.
+Manual runs from the Actions tab use the same change filter and require passing CI for
+the current `main` commit. Stale runs and already published versions are skipped. An
+interrupted draft upload can be retried for the same commit.
 
 To reproduce a release build locally:
 
@@ -38,8 +52,10 @@ To reproduce a release build locally:
 UNIVERSAL=1 SIGNING=adhoc VERSION=1.0.0 BUILD_NUMBER=1 ./build.sh
 ```
 
-Release builds are ad-hoc signed and not notarized. Signing them with an Apple Developer ID
-would need that account's certificate added as repository secrets.
+Release builds are ad-hoc signed and not notarized. Downloads can require **Open Anyway**
+and granting macOS privacy permissions again after updates. Developer ID distribution
+would also need a signing certificate and Apple notarization credentials; no such secrets
+are required by the current workflow.
 
 ## Verify changes with a mouse
 

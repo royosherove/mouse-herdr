@@ -1,6 +1,6 @@
 name: Release
 
-# Publishes a build each time a change lands on main and CI passes for it.
+# Publish tested app changes. Documentation, tests, and CI edits alone do not release.
 on:
   workflow_run:
     workflows: [CI]
@@ -10,22 +10,30 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 concurrency:
   group: release
   cancel-in-progress: false
 
 jobs:
-  release:
-    name: Build and publish
+  plan:
+    name: Check for unreleased app changes
     # Only after CI succeeded for a push to main (not for pull requests), or when run by hand.
     if: >-
-      github.event_name == 'workflow_dispatch' ||
-      (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push')
-    runs-on: macos-26
-    timeout-minutes: 30
-    permissions:
-      contents: write
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'push' &&
+       github.event.workflow_run.head_repository.full_name == github.repository)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      publish: ${{ steps.plan.outputs.publish }}
+      version: ${{ steps.plan.outputs.version }}
+      build: ${{ steps.plan.outputs.build }}
+      previous_tag: ${{ steps.plan.outputs.previous_tag }}
+      resume_draft: ${{ steps.plan.outputs.resume_draft }}
+      sha: ${{ env.RELEASE_SHA }}
     env:
       GH_TOKEN: ${{ github.token }}
       RELEASE_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
@@ -36,68 +44,112 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Work out the version
-        id: version
-        run: |
-          # <VERSION file>.<number of commits>, so every merge gets a new, increasing version.
-          base="$(tr -d '[:space:]' < VERSION)"
-          count="$(git rev-list --count HEAD)"
-          version="${base}.${count}"
-          echo "version=${version}" >> "$GITHUB_OUTPUT"
-          echo "build=${count}" >> "$GITHUB_OUTPUT"
-          if gh release view "v${version}" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            echo "exists=true" >> "$GITHUB_OUTPUT"
-            echo "v${version} is already released; nothing to do."
-          else
-            echo "exists=false" >> "$GITHUB_OUTPUT"
-          fi
+      - name: Require passing CI and changes to the app or its build inputs
+        id: plan
+        run: python3 scripts/release_plan.py
+
+  release:
+    name: Build and publish
+    needs: plan
+    if: needs.plan.outputs.publish == 'true'
+    runs-on: macos-26
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    env:
+      RELEASE_SHA: ${{ needs.plan.outputs.sha }}
+      VERSION: ${{ needs.plan.outputs.version }}
+      BUILD_NUMBER: ${{ needs.plan.outputs.build }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ env.RELEASE_SHA }}
+          persist-credentials: false
 
       - name: Build the app for Apple silicon and Intel
-        if: steps.version.outputs.exists == 'false'
         env:
           SIGNING: adhoc
           UNIVERSAL: "1"
-          VERSION: ${{ steps.version.outputs.version }}
-          BUILD_NUMBER: ${{ steps.version.outputs.build }}
         run: |
           ./build.sh
           lipo -archs dist/MouseHerdr.app/Contents/MacOS/MouseHerdr
 
-      - name: Package
-        if: steps.version.outputs.exists == 'false'
-        env:
-          VERSION: ${{ steps.version.outputs.version }}
+      - name: Package and verify the download
         run: |
           cd dist
-          zip="MouseHerdr-${VERSION}.zip"
-          ditto -c -k --keepParent MouseHerdr.app "$zip"
-          shasum -a 256 "$zip" > "$zip.sha256"
-          cat "$zip.sha256"
+          # A stable filename also provides /releases/latest/download/MouseHerdr.zip.
+          ditto -c -k --keepParent MouseHerdr.app MouseHerdr.zip
+          shasum -a 256 MouseHerdr.zip > MouseHerdr.zip.sha256
+          shasum -a 256 -c MouseHerdr.zip.sha256
+          rm -rf verified
+          mkdir verified
+          ditto -x -k MouseHerdr.zip verified
+          codesign --verify --strict --all-architectures --verbose=2 verified/MouseHerdr.app
+          python3 - <<'PY'
+          import subprocess
+          binary = "verified/MouseHerdr.app/Contents/MacOS/MouseHerdr"
+          archs = set(subprocess.check_output(["lipo", "-archs", binary], text=True).split())
+          if archs != {"arm64", "x86_64"}:
+              raise SystemExit(f"Expected Apple silicon and Intel in the download, got {archs}")
+          print("Verified Apple silicon and Intel architectures.")
+          PY
+          test "$(plutil -extract CFBundleShortVersionString raw verified/MouseHerdr.app/Contents/Info.plist)" = "$VERSION"
+          test "$(plutil -extract CFBundleVersion raw verified/MouseHerdr.app/Contents/Info.plist)" = "$BUILD_NUMBER"
+
+      - name: Check the packaged app with optional Herdr dependencies missing or failing
+        env:
+          MOUSEHERDR_TEST_BINARY: dist/verified/MouseHerdr.app/Contents/MacOS/MouseHerdr
+        run: python3 scripts/test_setup.py
 
       - name: Publish the release
-        if: steps.version.outputs.exists == 'false'
         env:
-          VERSION: ${{ steps.version.outputs.version }}
+          GH_TOKEN: ${{ github.token }}
+          PREVIOUS_TAG: ${{ needs.plan.outputs.previous_tag }}
+          RESUME_DRAFT: ${{ needs.plan.outputs.resume_draft }}
         run: |
+          current="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/main" --jq '.object.sha')"
+          if [ "$current" != "$RELEASE_SHA" ]; then
+            echo "A newer commit reached main during the build; leaving Latest unchanged."
+            exit 0
+          fi
           cat > notes.md <<EOF
           ## Install
 
-          1. Download \`MouseHerdr-${VERSION}.zip\`, unzip it and move **MouseHerdr** to Applications.
-          2. This build is not notarized by Apple, so macOS will refuse to open it at first. Clear the download flag once:
-             \`\`\`
-             xattr -dr com.apple.quarantine /Applications/MouseHerdr.app
-             \`\`\`
-          3. Open it and allow Accessibility and Input Monitoring when asked.
+          1. Download **MouseHerdr.zip** from Assets below and unzip it.
+          2. Quit any running MouseHerdr, then drag **MouseHerdr.app** to **Applications**, replacing an older copy if needed.
+          3. Open MouseHerdr from Applications. This app is ad-hoc signed and **not notarized by Apple**.
+             If macOS blocks it, go to **System Settings → Privacy & Security**, find MouseHerdr under Security,
+             and choose **Open Anyway** to allow this downloaded app.
+          4. Grant **Accessibility** and **Input Monitoring** in Privacy & Security.
+             If MouseHerdr is missing from Input Monitoring, add the Applications copy with **+**.
+             Quit and reopen MouseHerdr after granting the permissions.
 
           Runs on macOS 13 or later, on Apple silicon and Intel.
 
-          **Updating:** this download is signed without a certificate, so macOS treats each new version as a different app and asks for the two permissions again. To keep permissions across updates, [build from source](https://github.com/${GITHUB_REPOSITORY}#install) instead.
+          **Updating:** your assignments remain saved. Ad-hoc signing can require granting the two
+          permissions again after an update; remove and re-add the Applications copy if necessary.
+          [Building from source](https://github.com/${GITHUB_REPOSITORY}#build-from-source) creates a
+          stable local signing identity for subsequent rebuilds.
+
+          **Checksum:** download \`MouseHerdr.zip.sha256\` alongside the ZIP, then run
+          \`shasum -a 256 -c MouseHerdr.zip.sha256\` in that directory.
 
           EOF
-          gh release create "v${VERSION}" \
-            "dist/MouseHerdr-${VERSION}.zip" "dist/MouseHerdr-${VERSION}.zip.sha256" \
-            --repo "$GITHUB_REPOSITORY" \
-            --target "$RELEASE_SHA" \
-            --title "MouseHerdr ${VERSION}" \
-            --notes "$(cat notes.md)" \
-            --generate-notes
+          if [ "$RESUME_DRAFT" = true ]; then
+            # Retry an interrupted upload without overwriting a published release.
+            gh release upload "v${VERSION}" dist/MouseHerdr.zip dist/MouseHerdr.zip.sha256 \
+              --repo "$GITHUB_REPOSITORY" --clobber
+            gh release edit "v${VERSION}" --repo "$GITHUB_REPOSITORY" \
+              --notes-file notes.md --draft=false --latest
+          else
+            notes_args=()
+            if [ -n "$PREVIOUS_TAG" ]; then notes_args+=(--notes-start-tag "$PREVIOUS_TAG"); fi
+            # gh uploads the assets to a draft before publishing it.
+            gh release create "v${VERSION}" \
+              dist/MouseHerdr.zip dist/MouseHerdr.zip.sha256 \
+              --repo "$GITHUB_REPOSITORY" \
+              --target "$RELEASE_SHA" \
+              --title "MouseHerdr ${VERSION}" \
+              --notes-file notes.md \
+              --generate-notes "${notes_args[@]}" --latest
+          fi
