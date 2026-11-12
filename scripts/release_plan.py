@@ -82,7 +82,7 @@ def publication_state(head, version):
     owner, name = os.environ["GITHUB_REPOSITORY"].split("/", 1)
     query = """query($owner: String!, $name: String!, $tag: String!) {
       repository(owner: $owner, name: $name) {
-        release(tagName: $tag) { isDraft targetCommitish }
+        release(tagName: $tag) { isDraft databaseId }
       }
     }"""
     response = subprocess.check_output([
@@ -94,7 +94,11 @@ def publication_state(head, version):
         return "new"
     if not release["isDraft"]:
         return "published"
-    if release["targetCommitish"] != head:
+    # target_commitish is exposed by REST, not by GraphQL's Release type.
+    draft = json.loads(subprocess.check_output([
+        "gh", "api", f"repos/{owner}/{name}/releases/{release['databaseId']}",
+    ], text=True))
+    if draft["target_commitish"] != head:
         raise ValueError("An existing draft targets a different commit; review it before releasing.")
     return "draft"
 

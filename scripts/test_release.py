@@ -153,13 +153,16 @@ class ReleaseGateTests(unittest.TestCase):
 class PublicationStateTests(unittest.TestCase):
     SHA = "a" * 40
 
-    def state(self, release):
+    def state(self, release, draft=None):
         response = {"data": {"repository": {"release": release}}}
+        responses = [json.dumps(response)]
+        if draft is not None:
+            responses.append(json.dumps(draft))
         with patch.dict(os.environ, {"GITHUB_REPOSITORY": "example/mouse-herdr"}), patch(
-            "release_plan.subprocess.check_output", return_value=json.dumps(response),
+            "release_plan.subprocess.check_output", side_effect=responses,
         ) as request:
             state = publication_state(self.SHA, "1.0.5")
-            self.assertEqual(request.call_args.args[0][:3], ["gh", "api", "graphql"])
+            self.assertEqual(request.call_args_list[0].args[0][:3], ["gh", "api", "graphql"])
             return state
 
     def test_new_release_can_be_created(self):
@@ -169,15 +172,26 @@ class PublicationStateTests(unittest.TestCase):
         self.assertEqual(self.state({"isDraft": False}), "published")
 
     def test_pending_draft_can_resume_for_the_same_commit(self):
-        self.assertEqual(self.state({"isDraft": True, "targetCommitish": self.SHA}), "draft")
+        self.assertEqual(self.state(
+            {"isDraft": True, "databaseId": 123}, {"target_commitish": self.SHA},
+        ), "draft")
 
     def test_draft_for_another_commit_is_rejected(self):
         with self.assertRaisesRegex(ValueError, "different commit"):
-            self.state({"isDraft": True, "targetCommitish": "b" * 40})
+            self.state({"isDraft": True, "databaseId": 123}, {"target_commitish": "b" * 40})
 
     def test_api_failure_cannot_be_mistaken_for_a_new_release(self):
         with patch.dict(os.environ, {"GITHUB_REPOSITORY": "example/mouse-herdr"}), patch(
             "release_plan.subprocess.check_output", side_effect=subprocess.CalledProcessError(1, "gh"),
+        ):
+            with self.assertRaises(subprocess.CalledProcessError):
+                publication_state(self.SHA, "1.0.5")
+
+    def test_failed_draft_lookup_does_not_allow_creation(self):
+        response = {"data": {"repository": {"release": {"isDraft": True, "databaseId": 123}}}}
+        with patch.dict(os.environ, {"GITHUB_REPOSITORY": "example/mouse-herdr"}), patch(
+            "release_plan.subprocess.check_output",
+            side_effect=[json.dumps(response), subprocess.CalledProcessError(1, "gh")],
         ):
             with self.assertRaises(subprocess.CalledProcessError):
                 publication_state(self.SHA, "1.0.5")
