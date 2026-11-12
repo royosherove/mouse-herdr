@@ -64,6 +64,26 @@ one its own picture and buttons.
 
 ## Install
 
+There are two ways to get it. Building from source is the better one for everyday use,
+because macOS then keeps your permissions when you update.
+
+### Download a release
+
+Every change merged to `main` is built and published automatically on the
+[Releases](https://github.com/royosherove/mouse-herdr/releases) page, as one app for both
+Apple silicon and Intel.
+
+1. Download the latest `MouseHerdr-<version>.zip`, unzip it and move MouseHerdr to
+   Applications.
+2. The download is not notarized by Apple, so clear the download flag once before opening:
+   `xattr -dr com.apple.quarantine /Applications/MouseHerdr.app`
+3. Open it and allow the two permissions described below.
+
+Release builds are signed without a certificate. macOS therefore treats each new version as
+a different app and asks for the permissions again after every update.
+
+### Build from source
+
 Install Apple's command line tools if you have not already, then finish the installer:
 
 ```bash

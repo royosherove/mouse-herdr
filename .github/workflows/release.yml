@@ -1,0 +1,103 @@
+name: Release
+
+# Publishes a build each time a change lands on main and CI passes for it.
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Build and publish
+    # Only after CI succeeded for a push to main (not for pull requests), or when run by hand.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push')
+    runs-on: macos-26
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      RELEASE_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ env.RELEASE_SHA }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Work out the version
+        id: version
+        run: |
+          # <VERSION file>.<number of commits>, so every merge gets a new, increasing version.
+          base="$(tr -d '[:space:]' < VERSION)"
+          count="$(git rev-list --count HEAD)"
+          version="${base}.${count}"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "build=${count}" >> "$GITHUB_OUTPUT"
+          if gh release view "v${version}" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "v${version} is already released; nothing to do."
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build the app for Apple silicon and Intel
+        if: steps.version.outputs.exists == 'false'
+        env:
+          SIGNING: adhoc
+          UNIVERSAL: "1"
+          VERSION: ${{ steps.version.outputs.version }}
+          BUILD_NUMBER: ${{ steps.version.outputs.build }}
+        run: |
+          ./build.sh
+          lipo -archs dist/MouseHerdr.app/Contents/MacOS/MouseHerdr
+
+      - name: Package
+        if: steps.version.outputs.exists == 'false'
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          cd dist
+          zip="MouseHerdr-${VERSION}.zip"
+          ditto -c -k --keepParent MouseHerdr.app "$zip"
+          shasum -a 256 "$zip" > "$zip.sha256"
+          cat "$zip.sha256"
+
+      - name: Publish the release
+        if: steps.version.outputs.exists == 'false'
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          cat > notes.md <<EOF
+          ## Install
+
+          1. Download \`MouseHerdr-${VERSION}.zip\`, unzip it and move **MouseHerdr** to Applications.
+          2. This build is not notarized by Apple, so macOS will refuse to open it at first. Clear the download flag once:
+             \`\`\`
+             xattr -dr com.apple.quarantine /Applications/MouseHerdr.app
+             \`\`\`
+          3. Open it and allow Accessibility and Input Monitoring when asked.
+
+          Runs on macOS 13 or later, on Apple silicon and Intel.
+
+          **Updating:** this download is signed without a certificate, so macOS treats each new version as a different app and asks for the two permissions again. To keep permissions across updates, [build from source](https://github.com/${GITHUB_REPOSITORY}#install) instead.
+
+          EOF
+          gh release create "v${VERSION}" \
+            "dist/MouseHerdr-${VERSION}.zip" "dist/MouseHerdr-${VERSION}.zip.sha256" \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$RELEASE_SHA" \
+            --title "MouseHerdr ${VERSION}" \
+            --notes "$(cat notes.md)" \
+            --generate-notes

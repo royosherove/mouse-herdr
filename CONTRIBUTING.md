@@ -25,6 +25,22 @@ macOS runners. These checks do not validate Bluetooth hardware, privacy permissi
 or behavior on every macOS release. For normal use, run `./build.sh install` with local
 signing as described in the [README](README.md).
 
+## Releases
+
+When a change lands on `main` and CI passes, the Release workflow builds a universal app,
+zips it and publishes a GitHub release. The version is the contents of the `VERSION` file
+followed by the number of commits on `main` (for example `1.0.42`); raise `VERSION` for a
+new major or minor version. The workflow can also be run by hand from the Actions tab.
+
+To reproduce a release build locally:
+
+```bash
+UNIVERSAL=1 SIGNING=adhoc VERSION=1.0.0 BUILD_NUMBER=1 ./build.sh
+```
+
+Release builds are ad-hoc signed and not notarized. Signing them with an Apple Developer ID
+would need that account's certificate added as repository secrets.
+
 ## Verify changes with a mouse
 
 For changes to remapping, HID++, installation or permissions, include the Mac, macOS
