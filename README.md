@@ -6,11 +6,13 @@ motor, and it can show and answer your coding agents from a wheel around the poi
 
 It talks to the mouse directly, so it does not need Logi Options+.
 
-![The MouseHerdr window](docs/window.png)
+![The agent wheel around the pointer](docs/agent-wheel.png)
 
 ## What it does
 
 **Buttons**
+
+![The MouseHerdr window](docs/window.png)
 
 - Assign any of the wheel click, top button, gesture button, forward, back and haptic panel
   to an action: back/forward, tabs, Mission Control, desktops, copy/paste, media keys,
@@ -33,8 +35,6 @@ It talks to the mouse directly, so it does not need Logi Options+.
   it lands on something clickable.
 
 **Coding agents (optional, needs [Herdr](https://herdr.dev))**
-
-![The agent wheel](docs/agent-wheel.png)
 
 - Tap the haptic panel to see your agents in a wheel around the pointer. Agents waiting on
   you are orange, wider, and closest.
@@ -65,7 +65,8 @@ one its own picture and buttons.
 ## Install
 
 [Download the latest Mac app](https://github.com/royosherove/mouse-herdr/releases/latest/download/MouseHerdr.zip),
-or [build from source](#build-from-source).
+[build from source](#build-from-source), or
+[give your agent the build prompt](#building-from-source-for-agents).
 
 ### Download a release
 
@@ -128,6 +129,41 @@ In the app's setup panel, grant these two permissions under **System Settings â†
 If MouseHerdr does not appear in the Input Monitoring list, click **+** there and choose it
 from Applications. Quit and reopen MouseHerdr after granting Input Monitoring, or use its
 relaunch button.
+
+### Building from source for agents
+
+Paste this entire prompt into an agent that can run commands on your Mac:
+
+```text
+Build and install MouseHerdr on this Mac from https://github.com/royosherove/mouse-herdr.
+
+1. Check that this is macOS 13 or newer and that Apple's command line tools provide
+   Swift 5.9 or newer. Use xcode-select -p and swift --version. If tools are missing,
+   run xcode-select --install and tell me to finish Apple's installer before continuing.
+
+2. Use my existing MouseHerdr checkout if there is one. Otherwise clone the repository
+   into a persistent folder, such as ~/Developer/mouse-herdr. Read its README,
+   CONTRIBUTING.md, and build.sh. If an existing checkout is clean, update it with
+   git pull --ff-only. Preserve any local edits, local.env, and signing/ directory.
+
+3. Build as my normal user, without sudo. Use the default local signing mode,
+   SIGNING=local, and keep any existing bundle identifier and signing identity.
+   Check whether local.env overrides those settings; do not replace an established
+   identity. A new install can use the default dev.mouseherdr.app identifier.
+   Run swift test, python3 scripts/test_release.py, and SIGNING=local ./build.sh install.
+   If Applications requires administrator approval, tell me to copy
+   dist/MouseHerdr.app there with Finder and open it.
+
+4. Verify /Applications/MouseHerdr.app with codesign --verify --strict, and report the
+   installed version and any errors. Guide me through granting Accessibility and
+   Input Monitoring in System Settings > Privacy & Security, then relaunching the app.
+   Explain that the mouse must connect over Bluetooth. I will grant the permissions
+   and check the physical mouse myself.
+
+5. Herdr is optional; do not install it unless I ask. Keep this checkout and signing/
+   so future updates can use git pull --ff-only followed by ./build.sh install without
+   changing the signing identity. Finish with the app location and any manual steps.
+```
 
 ### Set up the agent wheel (optional)
 
