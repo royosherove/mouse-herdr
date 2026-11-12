@@ -138,9 +138,9 @@ final class AgentWatcher {
     static let timeout: TimeInterval = 4
 
     static func tool(_ name: String) -> String? {
-        // Developer aid: MIGHTYMOUSE_HC / MIGHTYMOUSE_HERDR_APP name the exact file to use
+        // Developer aid: MOUSEHERDR_HC / MOUSEHERDR_HERDR_APP name the exact file to use
         // (or one that doesn't exist), to try out the "not installed" and "not running" cases.
-        let key = "MIGHTYMOUSE_" + name.uppercased().replacingOccurrences(of: "-", with: "_")
+        let key = "MOUSEHERDR_" + name.uppercased().replacingOccurrences(of: "-", with: "_")
         if let forced = ProcessInfo.processInfo.environment[key] {
             return FileManager.default.isExecutableFile(atPath: forced) ? forced : nil
         }
@@ -156,7 +156,7 @@ final class AgentWatcher {
     static func herdrAppInstalled() -> Bool {
         if tool("herdr-app") != nil { return true }
         // The override above also hides the app, so "no Herdr app" can be tried on a Mac that has it.
-        if ProcessInfo.processInfo.environment["MIGHTYMOUSE_HERDR_APP"] != nil { return false }
+        if ProcessInfo.processInfo.environment["MOUSEHERDR_HERDR_APP"] != nil { return false }
         return NSWorkspace.shared.urlForApplication(withBundleIdentifier: appBundleID) != nil
     }
 
@@ -340,7 +340,7 @@ final class AgentWatcher {
                 Log.write("agents: no herdr-app command, so Herdr opens without picking the agent")
             }
             // Bring the Herdr window forward. Going through Launch Services works even though
-            // MightyMouse itself is a background app; a plain activate() request gets ignored.
+            // MouseHerdr itself is a background app; a plain activate() request gets ignored.
             DispatchQueue.main.async {
                 guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: Self.appBundleID) else {
                     Log.write("agents: Herdr app not found")

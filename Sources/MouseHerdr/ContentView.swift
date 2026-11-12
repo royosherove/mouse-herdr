@@ -46,7 +46,7 @@ struct ContentView: View {
     private var header: some View {
         HStack(alignment: .center) {
             VStack(alignment: .leading, spacing: 2) {
-                Text("MightyMouse").font(.system(size: 22, weight: .bold, design: .rounded))
+                Text("MouseHerdr").font(.system(size: 22, weight: .bold, design: .rounded))
                 Text("Pick a button, then choose what it does.")
                     .font(.system(size: 12.5)).foregroundStyle(.secondary)
             }
@@ -87,19 +87,19 @@ struct ContentView: View {
                 .font(.system(size: 13, weight: .semibold))
             if state.needsRelaunch {
                 HStack {
-                    Text("macOS needs MightyMouse to restart before the new permission takes effect.")
+                    Text("macOS needs MouseHerdr to restart before the new permission takes effect.")
                         .font(.system(size: 12)).foregroundStyle(.secondary)
                     Spacer()
-                    Button("Restart MightyMouse") { state.relaunch() }.buttonStyle(.borderedProminent).tint(Palette.accent)
+                    Button("Restart MouseHerdr") { state.relaunch() }.buttonStyle(.borderedProminent).tint(Palette.accent)
                 }
             } else {
                 permissionRow(
                     ok: state.accessibilityOK, title: "Accessibility",
-                    why: "Lets MightyMouse press shortcuts and move windows for you.",
+                    why: "Lets MouseHerdr press shortcuts and move windows for you.",
                     action: state.requestAccessibility)
                 permissionRow(
                     ok: state.inputMonitoringOK, title: "Input Monitoring",
-                    why: state.profile.directLinkWhy + " If MightyMouse isn't in the list, click + there and pick it from Applications.",
+                    why: state.profile.directLinkWhy + " If MouseHerdr isn't in the list, click + there and pick it from Applications.",
                     action: state.requestInputMonitoring)
             }
         }
@@ -129,7 +129,7 @@ struct ContentView: View {
 
     private var footer: some View {
         HStack {
-            Toggle("Start MightyMouse when I log in", isOn: Binding(
+            Toggle("Start MouseHerdr when I log in", isOn: Binding(
                 get: { state.launchAtLogin }, set: { state.setLaunchAtLogin($0) }))
                 .toggleStyle(.checkbox).font(.system(size: 12))
             Spacer()
@@ -238,7 +238,7 @@ struct DetailPanel: View {
     private var unavailableText: String {
         if !state.accessibilityOK { return "Works once Accessibility is allowed (see the left side)." }
         if state.hidStatus != .connected {
-            return "This one button also needs Input Monitoring. In the settings list, switch MightyMouse on — if it isn't listed, click + and pick MightyMouse from Applications."
+            return "This one button also needs Input Monitoring. In the settings list, switch MouseHerdr on — if it isn't listed, click + and pick MouseHerdr from Applications."
         }
         return "Your mouse didn't report this button, so it can't be changed."
     }

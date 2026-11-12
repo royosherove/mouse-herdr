@@ -1,4 +1,4 @@
-# MightyMouse
+# MouseHerdr
 
 A small, friendly macOS menu bar app for the Logitech MX Master 4. Pick a button on a
 picture of the mouse, choose what it does, and you're done. It also uses the mouse's haptic
@@ -6,7 +6,7 @@ motor, and it can show and answer your coding agents from a wheel around the poi
 
 It talks to the mouse directly, so it does not need Logi Options+.
 
-![The MightyMouse window](docs/window.png)
+![The MouseHerdr window](docs/window.png)
 
 ## What it does
 
@@ -61,11 +61,11 @@ The Logi Bolt USB receiver is not supported. Any other Logitech Bluetooth mouse 
 
 ```bash
 git clone <this repository>
-cd mightymouse
+cd mouse-herdr
 ./build.sh install
 ```
 
-This builds the app, copies it to `/Applications/MightyMouse.app` and starts it. The first
+This builds the app, copies it to `/Applications/MouseHerdr.app` and starts it. The first
 start opens the window; after that it starts quietly in the menu bar and at login.
 
 macOS will ask for two permissions:
@@ -75,22 +75,22 @@ macOS will ask for two permissions:
 | Accessibility | To press shortcuts for you and move windows. Required. |
 | Input Monitoring | To talk to the mouse directly. Needed for the top button, real hold and release on the haptic panel, haptics, and battery level. |
 
-If MightyMouse does not appear in the Input Monitoring list, click **+** there and choose it
+If MouseHerdr does not appear in the Input Monitoring list, click **+** there and choose it
 from Applications.
 
 ### What the build script does
 
-- Builds with `swift build` and assembles `dist/MightyMouse.app`.
+- Builds with `swift build` and assembles `dist/MouseHerdr.app`.
 - Signs the app with a self-signed certificate it creates in `signing/` (not committed), so
   macOS keeps your permissions across rebuilds. To make that certificate findable it adds
   that keychain file to your keychain search list.
-- Uses the app identifier `dev.mightymouse.app`. To use your own, put
+- Uses the app identifier `dev.mouseherdr.app`. To use your own, put
   `BUNDLE_ID=your.own.id` in a file called `local.env`. macOS ties permissions and settings
   to the identifier, so pick one and keep it.
 
-To remove everything: quit from the menu bar, delete `/Applications/MightyMouse.app`,
-`~/Library/Application Support/MightyMouse` and `~/Library/Logs/MightyMouse.log`, and remove
-MightyMouse from Login Items and the two privacy lists in System Settings.
+To remove everything: quit from the menu bar, delete `/Applications/MouseHerdr.app`,
+`~/Library/Application Support/MouseHerdr` and `~/Library/Logs/MouseHerdr.log`, and remove
+MouseHerdr from Login Items and the two privacy lists in System Settings.
 
 ## Good to know
 
@@ -99,8 +99,8 @@ MightyMouse from Login Items and the two privacy lists in System Settings.
 - Running Logi Options+ at the same time will fight over the buttons. Use one or the other.
 - "Feel what's clickable" asks each app what is under the pointer, which can slow
   Chromium-based apps slightly. Turn it off if you notice.
-- Settings are in `~/Library/Application Support/MightyMouse/config.json`. The log is at
-  `~/Library/Logs/MightyMouse.log`.
+- Settings are in `~/Library/Application Support/MouseHerdr/config.json`. The log is at
+  `~/Library/Logs/MouseHerdr.log`.
 
 ## How it works
 
@@ -122,9 +122,9 @@ MightyMouse from Login Items and the two privacy lists in System Settings.
 
 Everything specific to one mouse lives in a `MouseProfile`. To add one:
 
-1. Copy `Sources/MightyMouse/Profiles/MXMaster4.swift` (or the smaller `Generic.swift`) to a
+1. Copy `Sources/MouseHerdr/Profiles/MXMaster4.swift` (or the smaller `Generic.swift`) to a
    new file in the same folder and rename the static property, `id` and `name`.
-2. Say how to recognise it: `productIDs` (the HID product id; MightyMouse writes it to the log
+2. Say how to recognise it: `productIDs` (the HID product id; MouseHerdr writes it to the log
    as `found … (product id 0x….)` when the mouse connects) and/or `nameContains` (part of the
    name the mouse reports).
 3. List its `controls`. Each one has:
@@ -145,7 +145,7 @@ Everything specific to one mouse lives in a `MouseProfile`. To add one:
 5. Add it to `MouseProfile.all` in `MouseProfile.swift`.
 
 Check the drawing without the mouse: `./build.sh`, then
-`dist/MightyMouse.app/Contents/MacOS/MightyMouse --snapshot /tmp/mouse.png --profile <id>`
+`dist/MouseHerdr.app/Contents/MacOS/MouseHerdr --snapshot /tmp/mouse.png --profile <id>`
 (add `--dark`, `--gesture` or `--wheel` for other views).
 
 ## Acknowledgements

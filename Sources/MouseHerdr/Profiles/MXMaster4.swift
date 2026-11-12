@@ -66,7 +66,7 @@ extension MouseProfile {
             .gestureLeft: Action(kind: "spaceLeft"),
             .gestureRight: Action(kind: "spaceRight"),
         ],
-        directLinkWhy: "Lets MightyMouse feel when the haptic panel and top button are held and released.",
+        directLinkWhy: "Lets MouseHerdr feel when the haptic panel and top button are held and released.",
         art: MouseArt(
             size: CGSize(width: 660, height: 520),
             body: {

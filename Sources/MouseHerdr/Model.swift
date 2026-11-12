@@ -7,7 +7,7 @@ enum Log {
     static let url: URL = {
         let dir = FileManager.default.urls(for: .libraryDirectory, in: .userDomainMask)[0].appendingPathComponent("Logs")
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        let u = dir.appendingPathComponent("MightyMouse.log")
+        let u = dir.appendingPathComponent("MouseHerdr.log")
         if let size = (try? FileManager.default.attributesOfItem(atPath: u.path))?[.size] as? Int, size > 1_000_000 {
             try? FileManager.default.removeItem(at: u)
         }
@@ -227,9 +227,15 @@ enum Catalog {
 enum ConfigStore {
     static let url: URL = {
         let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("MightyMouse")
+            .appendingPathComponent("MouseHerdr")
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        return dir.appendingPathComponent("config.json")
+        let file = dir.appendingPathComponent("config.json")
+        // Settings saved under the app's earlier name carry over.
+        let legacy = dir.deletingLastPathComponent().appendingPathComponent("MightyMouse/config.json")
+        if !FileManager.default.fileExists(atPath: file.path), FileManager.default.fileExists(atPath: legacy.path) {
+            try? FileManager.default.copyItem(at: legacy, to: file)
+        }
+        return file
     }()
 
     /// Saved choices on top of the mouse's own defaults.

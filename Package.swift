@@ -2,12 +2,12 @@
 import PackageDescription
 
 let package = Package(
-    name: "MightyMouse",
+    name: "MouseHerdr",
     platforms: [.macOS(.v13)],
     targets: [
         .executableTarget(
-            name: "MightyMouse",
-            path: "Sources/MightyMouse",
+            name: "MouseHerdr",
+            path: "Sources/MouseHerdr",
             swiftSettings: [.unsafeFlags(["-swift-version", "5"])]
         )
     ]

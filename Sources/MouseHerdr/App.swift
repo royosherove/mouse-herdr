@@ -34,7 +34,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let args = CommandLine.arguments
 
         // Developer aid: say what the Herdr check finds, using the same code as the running app.
-        // MIGHTYMOUSE_HC and MIGHTYMOUSE_HERDR_APP point it at other (or missing) commands.
+        // MOUSEHERDR_HC and MOUSEHERDR_HERDR_APP point it at other (or missing) commands.
         if args.contains("--herdr-status") {
             let started = Date()
             let found = AgentWatcher.look(details: false)
@@ -69,7 +69,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             } else {
                 let sample: [(String, String, String)] = [
                     ("blocked", "payments-api", "review"), ("blocked", "mobile-app", "2"), ("done", "docs-site", "1"),
-                    ("working", "mightymouse", "1"), ("working", "search-index", "bench"), ("done", "infra", "deploy"),
+                    ("working", "mouseherdr", "1"), ("working", "search-index", "bench"), ("done", "infra", "deploy"),
                     ("idle", "playground", "3"), ("working", "web-client", "tests"),
                 ]
                 list = AgentWatcher.parse(try! JSONSerialization.data(withJSONObject: ["terminals": sample.enumerated().map { i, s in
@@ -162,12 +162,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // Developer aid: ask the running copy to play a haptic waveform.
         if let i = args.firstIndex(of: "--buzz"), i + 1 < args.count {
             DistributedNotificationCenter.default().postNotificationName(
-                .init("MightyMouse.buzz"), object: args[i + 1], userInfo: nil, deliverImmediately: true)
+                .init("MouseHerdr.buzz"), object: args[i + 1], userInfo: nil, deliverImmediately: true)
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { NSApp.terminate(nil) }
             return
         }
         DistributedNotificationCenter.default().addObserver(
-            forName: .init("MightyMouse.buzz"), object: nil, queue: .main
+            forName: .init("MouseHerdr.buzz"), object: nil, queue: .main
         ) { [weak self] note in
             if let s = note.object as? String, let id = UInt8(s) { self?.state.hid.haptic(id) }
         }
@@ -175,12 +175,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // Developer aid: ask the running copy to jump to an agent, as the ring would.
         if let i = args.firstIndex(of: "--focus"), i + 1 < args.count {
             DistributedNotificationCenter.default().postNotificationName(
-                .init("MightyMouse.focus"), object: args[i + 1], userInfo: nil, deliverImmediately: true)
+                .init("MouseHerdr.focus"), object: args[i + 1], userInfo: nil, deliverImmediately: true)
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { NSApp.terminate(nil) }
             return
         }
         DistributedNotificationCenter.default().addObserver(
-            forName: .init("MightyMouse.focus"), object: nil, queue: .main
+            forName: .init("MouseHerdr.focus"), object: nil, queue: .main
         ) { [weak self] note in
             guard let id = note.object as? String else { return }
             self?.state.agents.focus(AgentInfo(id: id, agent: "", status: "", space: "test", tab: ""))
@@ -195,16 +195,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             var tries = 0
             while !others().isEmpty && tries < 8 { usleep(250_000); tries += 1 }
             if !others().isEmpty {
-                DistributedNotificationCenter.default().post(name: .init("MightyMouse.show"), object: nil)
+                DistributedNotificationCenter.default().post(name: .init("MouseHerdr.show"), object: nil)
                 NSApp.terminate(nil)
                 return
             }
         }
         DistributedNotificationCenter.default().addObserver(
-            forName: .init("MightyMouse.show"), object: nil, queue: .main
+            forName: .init("MouseHerdr.show"), object: nil, queue: .main
         ) { [weak self] _ in self?.showWindow() }
 
-        Log.write("---- MightyMouse started ----")
+        Log.write("---- MouseHerdr started ----")
         NSApp.setActivationPolicy(.accessory)
         setupStatusItem()
         state.start()
@@ -255,11 +255,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     private func setupStatusItem() {
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
-        item.button?.image = NSImage(systemSymbolName: "computermouse.fill", accessibilityDescription: "MightyMouse")
+        item.button?.image = NSImage(systemSymbolName: "computermouse.fill", accessibilityDescription: "MouseHerdr")
         let menu = NSMenu()
-        menu.addItem(withTitle: "Open MightyMouse…", action: #selector(showWindow), keyEquivalent: "").target = self
+        menu.addItem(withTitle: "Open MouseHerdr…", action: #selector(showWindow), keyEquivalent: "").target = self
         menu.addItem(.separator())
-        menu.addItem(withTitle: "Quit MightyMouse", action: #selector(quit), keyEquivalent: "q").target = self
+        menu.addItem(withTitle: "Quit MouseHerdr", action: #selector(quit), keyEquivalent: "q").target = self
         item.menu = menu
         statusItem = item
     }
@@ -274,7 +274,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 contentRect: NSRect(x: 0, y: 0, width: 1010, height: 690),
                 styleMask: [.titled, .closable, .miniaturizable, .fullSizeContentView],
                 backing: .buffered, defer: false)
-            w.title = "MightyMouse"
+            w.title = "MouseHerdr"
             w.titlebarAppearsTransparent = true
             w.titleVisibility = .hidden
             w.isReleasedWhenClosed = false
@@ -332,7 +332,7 @@ struct MenuBarNotice: View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 8) {
                 Image(systemName: "computermouse.fill").font(.system(size: 18)).foregroundStyle(Palette.accent)
-                Text("MightyMouse is running").font(.system(size: 14, weight: .bold, design: .rounded))
+                Text("MouseHerdr is running").font(.system(size: 14, weight: .bold, design: .rounded))
             }
             Text("It now starts quietly and lives here in the menu bar. Click this mouse icon whenever you want to change what your buttons do.")
                 .font(.system(size: 12)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)

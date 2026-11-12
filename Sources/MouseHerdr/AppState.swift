@@ -238,10 +238,17 @@ final class AppState: ObservableObject {
     func start() {
         refreshPermissions()
         launchAtLogin = SMAppService.mainApp.status == .enabled
-        if !UserDefaults.standard.bool(forKey: "didSetupLogin") {
-            UserDefaults.standard.set(true, forKey: "didSetupLogin")
+        let defaults = UserDefaults.standard
+        let path = Bundle.main.bundlePath
+        if !defaults.bool(forKey: "didSetupLogin") {
+            defaults.set(true, forKey: "didSetupLogin")
+            setLaunchAtLogin(true)
+        } else if defaults.string(forKey: "loginItemPath") != path, defaults.string(forKey: "loginItemPath") == nil || launchAtLogin {
+            // The app was moved or renamed: point the login item at where it is now.
+            try? SMAppService.mainApp.unregister()
             setLaunchAtLogin(true)
         }
+        defaults.set(path, forKey: "loginItemPath")
 
         tap.onPress = { [weak self] button in
             guard let self, let control = self.control(forButton: button) else {
@@ -392,7 +399,7 @@ final class AppState: ObservableObject {
     // MARK: Agents
 
     /// Notice agents that start waiting on you or finish, and say so through the thumb pad.
-    /// This is also what notices Herdr being installed, started or stopped while MightyMouse runs.
+    /// This is also what notices Herdr being installed, started or stopped while MouseHerdr runs.
     private func watchAgents() {
         // Nothing to ask for when neither agent feature is in use.
         guard ringOnTap || (feelAgents && hapticsOn && hapticsAvailable) || ring.isOpen else { return }

@@ -58,7 +58,7 @@ final class HIDPP {
             ready.signal()
             while true { CFRunLoopRunInMode(.defaultMode, 60, false) }
         }
-        t.name = "MightyMouse.HID"
+        t.name = "MouseHerdr.HID"
         t.start()
         thread = t
         ready.wait()

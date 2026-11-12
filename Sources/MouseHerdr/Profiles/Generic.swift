@@ -33,7 +33,7 @@ extension MouseProfile {
             .back: Action(kind: "back"),
             .forward: Action(kind: "forward"),
         ],
-        directLinkWhy: "Lets MightyMouse talk to the mouse directly, to show its battery level.",
+        directLinkWhy: "Lets MouseHerdr talk to the mouse directly, to show its battery level.",
         art: MouseArt(
             size: CGSize(width: 660, height: 520),
             body: {
