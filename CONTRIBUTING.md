@@ -1,0 +1,64 @@
+# Contributing to MouseHerdr
+
+Bug reports, setup improvements and tested mouse profiles are welcome. Use
+[GitHub issues](https://github.com/royosherove/mouse-herdr/issues) for bugs and suggestions,
+and pull requests for changes. For a vulnerability, follow [SECURITY.md](SECURITY.md).
+
+## Build and test
+
+Use macOS and Swift 5.9 or newer. From the repository:
+
+```bash
+swift test
+SIGNING=adhoc ./build.sh
+MOUSEHERDR_TEST_BINARY=dist/MouseHerdr.app/Contents/MacOS/MouseHerdr python3 scripts/test_setup.py
+```
+
+The setup tests use Python 3's standard library. They exercise failed builds with an old
+binary present and Herdr being missing, failing, empty or unresponsive. They use temporary
+mock commands, do not connect to your real Herdr sessions, and do not start mouse remapping
+or request privacy permissions. Swift tests cover agent data parsing and mouse profiles.
+Use `shellcheck build.sh` if ShellCheck is installed.
+
+GitHub Actions runs the tests and packages an ad-hoc signed app on Intel and Apple silicon
+macOS runners. These checks do not validate Bluetooth hardware, privacy permission prompts
+or behavior on every macOS release. For normal use, run `./build.sh install` with local
+signing as described in the [README](README.md).
+
+## Verify changes with a mouse
+
+For changes to remapping, HID++, installation or permissions, include the Mac, macOS
+version, mouse model and connection type you tested. Check the relevant behaviors:
+
+- First install: grant Accessibility and Input Monitoring and relaunch.
+- Remapping: click, hold/release, gestures, thumb wheel, and ordinary left/right clicks.
+- Window dragging: move, drop, snap and cancel without leaving a window attached.
+- Reconnection: mouse off/on, Bluetooth disconnect/reconnect, and Mac sleep/wake.
+- Quit: ordinary mouse behavior returns; reopen and check saved assignments.
+- Agent features: missing/stopped Herdr, no agents, viewing a question, sending an answer
+  and focusing a terminal. Use a disposable agent session when sending test answers.
+- Update: reinstall with the same signing identity and check that permissions persist.
+
+Do not describe untested mice or macOS versions as supported. A new mouse profile should
+include evidence from the actual device; see [Adding a mouse](README.md#adding-a-mouse).
+
+## Screenshots
+
+Use the built-in sample data to avoid exposing live sessions:
+
+```bash
+dist/MouseHerdr.app/Contents/MacOS/MouseHerdr --snapshot /tmp/mouseherdr-window.png
+dist/MouseHerdr.app/Contents/MacOS/MouseHerdr --snapshot /tmp/mouseherdr-generic.png --profile generic
+dist/MouseHerdr.app/Contents/MacOS/MouseHerdr --snapshot-ring /tmp/mouseherdr-agents.png
+dist/MouseHerdr.app/Contents/MacOS/MouseHerdr --snapshot-ring /tmp/mouseherdr-no-herdr.png --state not-installed --no-app
+```
+
+Avoid `--live` for public screenshots unless you have reviewed all visible session data.
+Review window snapshots too: they can use your saved button assignments and app paths.
+
+## Keep contributions portable
+
+Keep changes focused and describe the user-visible behavior and validation in the pull
+request. Do not commit `local.env`, `signing/`, build outputs, personal logs, credentials
+or private agent transcripts. The project is licensed under [MIT](LICENSE); submit code
+and assets you have permission to contribute under that license.

@@ -1,5 +1,17 @@
 .build/
+.swiftpm/
 dist/
 signing/
 .DS_Store
 local.env
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+*.p12
+*.pfx
+*.keychain
+*.keychain-db
+*.log
+__pycache__/

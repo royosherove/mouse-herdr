@@ -53,22 +53,42 @@ Everything optional has a switch under **Haptics & extras** in the window.
 - Xcode command line tools (Swift 5.9 or later) to build
 - A Logitech MX Master 4 connected over **Bluetooth**
 
-The Logi Bolt USB receiver is not supported. Any other Logitech Bluetooth mouse is shown as a
-"Generic mouse" with only the wheel click, back and forward buttons, and is untested. See
-[Adding a mouse](#adding-a-mouse) to give one its own picture and buttons.
+There are no third-party Swift packages, required accounts, or API keys. Herdr is only
+needed for the optional coding-agent features. Intel Macs can build from source, but
+mouse hardware testing has been on Apple silicon.
+
+The Logi Bolt USB receiver is not supported. Other Logitech Bluetooth mice that expose the
+same HID++ interface fall back to a "Generic mouse" with only the wheel click, back and
+forward buttons; these devices are untested. See [Adding a mouse](#adding-a-mouse) to give
+one its own picture and buttons.
 
 ## Install
 
+Install Apple's command line tools if you have not already, then finish the installer:
+
 ```bash
-git clone <this repository>
+xcode-select --install
+```
+
+Check that `swift --version` reports Swift 5.9 or newer, then:
+
+```bash
+git clone https://github.com/royosherove/mouse-herdr.git
 cd mouse-herdr
 ./build.sh install
 ```
 
 This builds the app, copies it to `/Applications/MouseHerdr.app` and starts it. The first
 start opens the window; after that it starts quietly in the menu bar and at login.
+You can turn off **Start MouseHerdr when I log in** in the window. Run the build as your
+normal user, without `sudo`; if Applications needs administrator approval, copy
+`dist/MouseHerdr.app` there with Finder and open it.
 
-macOS will ask for two permissions:
+Installation is from source and uses a local signing identity. An Apple Developer account
+is not required. This does not produce an Apple-notarized app for redistribution.
+
+In the app's setup panel, grant these two permissions under **System Settings → Privacy
+& Security**:
 
 | Permission | Why |
 | --- | --- |
@@ -76,21 +96,90 @@ macOS will ask for two permissions:
 | Input Monitoring | To talk to the mouse directly. Needed for the top button, real hold and release on the haptic panel, haptics, and battery level. |
 
 If MouseHerdr does not appear in the Input Monitoring list, click **+** there and choose it
-from Applications.
+from Applications. Quit and reopen MouseHerdr after granting Input Monitoring, or use its
+relaunch button.
+
+### Set up the agent wheel (optional)
+
+Install the [Herdr desktop app](https://github.com/herdrdev/herdr-app#install) separately;
+its shell installer also installs herdr-core. Start the app and open a coding-agent
+session there. MouseHerdr uses the `hc` command from herdr-core to list agents and send
+answers; `herdr-app` and the desktop app are used to focus an agent's terminal.
+
+The app looks for these commands in `~/.local/bin`, `/opt/homebrew/bin`, `/usr/local/bin`
+and `~/.cargo/bin`. Install the commands in one of those locations if your terminal can
+find them but MouseHerdr cannot. Check the connection without starting the mouse remapper:
+
+```bash
+/Applications/MouseHerdr.app/Contents/MacOS/MouseHerdr --herdr-status
+```
+
+**Haptics & extras** shows whether Herdr is missing, stopped, or running without agents.
+MouseHerdr rechecks while it runs, so installing or starting Herdr does not need a
+MouseHerdr restart. To use MouseHerdr without Herdr, turn off the agent ring and agent
+haptics in that panel; the mouse controls, window dragging and other haptics work separately.
+
+### Update
+
+Keep the same checkout and its `signing/` directory, then run:
+
+```bash
+git pull --ff-only
+./build.sh install
+```
+
+The installer quits the running copy before replacing it. Your assignments and preferences
+remain in your user Library.
 
 ### What the build script does
 
 - Builds with `swift build` and assembles `dist/MouseHerdr.app`.
 - Signs the app with a self-signed certificate it creates in `signing/` (not committed), so
   macOS keeps your permissions across rebuilds. To make that certificate findable it adds
-  that keychain file to your keychain search list.
-- Uses the app identifier `dev.mouseherdr.app`. To use your own, put
-  `BUNDLE_ID=your.own.id` in a file called `local.env`. macOS ties permissions and settings
-  to the identifier, so pick one and keep it.
+  that keychain file to your keychain search list. Keep the signing files private.
+- Uses the app identifier `dev.mouseherdr.app`. To customize the build, copy
+  `local.env.example` to `local.env` and edit it. Keep your chosen identifier stable after
+  granting permissions. `local.env` is ignored by Git and is sourced as shell code.
+- Verifies the app's signature before installation and stops if any build step fails.
 
-To remove everything: quit from the menu bar, delete `/Applications/MouseHerdr.app`,
-`~/Library/Application Support/MouseHerdr` and `~/Library/Logs/MouseHerdr.log`, and remove
-MouseHerdr from Login Items and the two privacy lists in System Settings.
+For a build without installing or launching the remapper, run `./build.sh`. For a disposable
+test build that leaves your keychains alone, run `SIGNING=adhoc ./build.sh` (ensure
+`local.env` does not override it). Ad-hoc signing does not preserve permissions across
+rebuilds. See [CONTRIBUTING.md](CONTRIBUTING.md) for tests and hardware checks.
+
+### Troubleshooting
+
+| Symptom | What to check |
+| --- | --- |
+| No window after starting | Click the mouse icon in the menu bar, then **Open MouseHerdr…**. Closing the window leaves remapping running. |
+| Buttons do nothing | Grant Accessibility to the copy in Applications. Quit other mouse remappers, including Logi Options+. |
+| Top button, haptics or battery unavailable | Connect over Bluetooth, grant Input Monitoring, then relaunch MouseHerdr. A Bolt receiver will not work. |
+| Permissions were granted but stopped working after rebuilding | Keep the same bundle identifier and signing identity. Remove the old app entry from the affected privacy list, add the current Applications copy, and relaunch. |
+| `swift` is missing or too old | Install or update Xcode command line tools, then check `xcode-select -p` and `swift --version`. |
+| Local signing fails | Retry the build and check its error output. If initial keychain creation was interrupted, follow the signing cleanup below and rebuild; macOS permissions will need granting again. |
+| Agent wheel has no agents | Run `--herdr-status` above, check the Herdr setup section, and start an agent in Herdr. |
+
+For a bug report, include your macOS version, Mac architecture, mouse model, connection
+type, `swift --version`, and the relevant error. Review logs for personal information
+before sharing them. See [CONTRIBUTING.md](CONTRIBUTING.md).
+
+### Uninstall and signing cleanup
+
+Turn off **Start MouseHerdr when I log in**, then quit from the menu bar. Delete
+`/Applications/MouseHerdr.app`, `~/Library/Application Support/MouseHerdr` and
+`~/Library/Logs/MouseHerdr.log`. Remove MouseHerdr from Login Items and the two privacy
+lists in System Settings. To also clear its UI preferences, run
+`defaults delete dev.mouseherdr.app` (substitute your identifier if you customized it).
+
+To remove the generated signing identity, run these commands from the original checkout
+before deleting the project directory:
+
+```bash
+security delete-keychain "$PWD/signing/mouseherdr.keychain-db"
+rm -rf signing
+```
+
+Skip signing cleanup if you intend to keep rebuilding with the same permissions.
 
 ## Good to know
 
@@ -101,6 +190,19 @@ MouseHerdr from Login Items and the two privacy lists in System Settings.
   Chromium-based apps slightly. Turn it off if you notice.
 - Settings are in `~/Library/Application Support/MouseHerdr/config.json`. The log is at
   `~/Library/Logs/MouseHerdr.log`.
+
+## Privacy
+
+MouseHerdr has no telemetry or built-in network requests. Remapping, window inspection and
+settings stay on your Mac. With agent features enabled, it reads agent status, titles,
+questions and terminal text through the locally installed Herdr tools, and sends answers
+through those tools when you choose to reply. Herdr and your coding agents have their own
+network behavior.
+
+Logs can contain application names, agent workspace/tab names, button events and local
+paths. Typed answers are logged by character count, not their contents. Review logs and
+screenshots before posting them. See [SECURITY.md](SECURITY.md) for private vulnerability
+reporting.
 
 ## How it works
 

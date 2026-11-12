@@ -7,8 +7,9 @@ let package = Package(
     targets: [
         .executableTarget(
             name: "MouseHerdr",
-            path: "Sources/MouseHerdr",
-            swiftSettings: [.unsafeFlags(["-swift-version", "5"])]
-        )
-    ]
+            path: "Sources/MouseHerdr"
+        ),
+        .testTarget(name: "MouseHerdrTests", dependencies: ["MouseHerdr"])
+    ],
+    swiftLanguageVersions: [.v5]
 )
