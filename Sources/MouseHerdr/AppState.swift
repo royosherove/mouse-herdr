@@ -167,6 +167,14 @@ final class AppState: ObservableObject {
         didSet { UserDefaults.standard.set(feelAgents, forKey: "feelAgents") }
     }
     /// Whether herdr-core and the Herdr app are there; both are optional and re-checked as the app runs.
+    /// The window's three pages. Agents comes first: it is what the app is for.
+    enum Tab: String, CaseIterable { case agents, buttons, feel }
+    @Published var tab: Tab = .agents
+    /// The agents as last seen, with their questions, for the Agents page.
+    @Published var agentList: [AgentInfo] = []
+    /// Set by the window; the Agents page only keeps itself fresh while someone can see it.
+    var windowVisible = false { didSet { if windowVisible { refreshAgentList() } } }
+    private var listFetching = false
     @Published var herdr = HerdrStatus.unknown
     @Published var herdrApp = true
     @Published var snapWindows = UserDefaults.standard.object(forKey: "snapWindows") as? Bool ?? true {
@@ -344,6 +352,7 @@ final class AppState: ObservableObject {
         refreshPermissions()
         ticks += 1
         if ticks % 2 == 0 { watchAgents() }
+        refreshAgentList()
         if accessibilityOK && !tap.isRunning { tap.start(); updateAvailability(); applyFeel() }
         if hidStatus == .notPermitted {
             // macOS sometimes refuses the first attempt right after launch, so keep trying quietly.
@@ -430,6 +439,53 @@ final class AppState: ObservableObject {
     private func noteHerdr() {
         if herdr != agents.status { herdr = agents.status }
         if herdrApp != agents.appInstalled { herdrApp = agents.appInstalled }
+    }
+
+    /// Refresh the Agents page: every agent with what it is asking.
+    func refreshAgentList() {
+        guard windowVisible, tab == .agents, !listFetching else { return }
+        listFetching = true
+        agents.fetch(details: true) { [weak self] list in
+            guard let self else { return }
+            self.listFetching = false
+            self.noteHerdr()
+            if self.agentList != list { self.agentList = list }
+        }
+    }
+
+    /// Open the wheel at the pointer, or pick from it if it is already open.
+    func toggleWheel() {
+        if ring.isOpen { ring.choose() } else { openRing() }
+    }
+
+    func focus(_ agent: AgentInfo) { agents.focus(agent) }
+
+    /// Answer an agent's question from the window with one of its offered choices.
+    func answer(_ agent: AgentInfo, option: Int) {
+        agents.answer(agent, option: option)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { [weak self] in self?.refreshAgentList() }
+    }
+
+    /// Plain-language list of what opens the wheel on this mouse right now.
+    var wheelTriggers: [String] {
+        var out: [String] = []
+        if ringOnTap, let pad = profile.control(.thumbPanel), action(.thumbPanel).isDrag {
+            out.append("A quick tap on the \(pad.title.lowercased())")
+        }
+        for c in profile.controls {
+            if action(c.slot).kind == "agentWheel" { out.append("The \(c.title.lowercased())") }
+            if c.gestures {
+                for s in Slot.swipes where action(s).kind == "agentWheel" {
+                    out.append("\(c.title): \(s.swipeTitle.lowercased())")
+                }
+            }
+        }
+        return out
+    }
+
+    /// Run an action; the agent wheel is ours, everything else is a key press or similar.
+    private func perform(_ a: Action) {
+        if a.kind == "agentWheel" { toggleWheel() } else { ActionRunner.run(a) }
     }
 
     /// Look again now; the settings popover asks for this when it opens.
@@ -583,7 +639,7 @@ final class AppState: ObservableObject {
         pulseSource = pulseOnly
         if hasGestures(slot) { gestureDown(slot); return }
         let a = action(slot)
-        guard a.isDrag else { ActionRunner.run(a); return }
+        guard a.isDrag else { perform(a); return }
         if ring.isOpen {                // pressing the pad again picks from the ring
             ringPress = true
             return
@@ -637,14 +693,14 @@ final class AppState: ObservableObject {
         gestureTimer?.invalidate(); gestureTimer = nil
         guard gestureHeld else { return }
         gestureHeld = false
-        if !gestureFired { ActionRunner.run(action(gestureSlot)) }
+        if !gestureFired { perform(action(gestureSlot)) }
     }
 
     private func swipe(_ dx: CGFloat, _ dy: CGFloat, threshold: CGFloat) {
         guard max(abs(dx), abs(dy)) > threshold else { return }
         let slot: Slot = abs(dx) > abs(dy) ? (dx > 0 ? .gestureRight : .gestureLeft) : (dy > 0 ? .gestureDown : .gestureUp)
         gestureFired = true
-        ActionRunner.run(action(slot))
+        perform(action(slot))
         buzz(.swipe)
     }
 

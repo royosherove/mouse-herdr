@@ -285,11 +285,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
         NSApp.setActivationPolicy(.regular)
         window?.makeKeyAndOrderFront(nil)
+        state.windowVisible = true
         NSApp.activate(ignoringOtherApps: true)
     }
 
     func windowWillClose(_ note: Notification) {
         state.recording = false
+        state.windowVisible = false
         // Keep working quietly from the menu bar.
         NSApp.setActivationPolicy(.accessory)
     }
@@ -305,14 +307,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         state.launchAtLogin = true
         state.available = Set(state.profile.controls.map { $0.slot })
         state.hapticsAvailable = state.profile.hasHaptics
-        let extras = CommandLine.arguments.contains("--extras")
+        // "--tab agents|buttons|feel" picks the page; snapshots show sample agents, never live ones.
+        let argv = CommandLine.arguments
+        if let j = argv.firstIndex(of: "--tab"), j + 1 < argv.count, let t = AppState.Tab(rawValue: argv[j + 1]) { state.tab = t }
+        if argv.contains("--wheel") || argv.contains("--gesture") || argv.contains("--profile") { state.tab = .buttons }
+        if state.agents.pinned == nil {
+            // Pinning keeps the picture from asking the real Herdr anything.
+            state.agents.pinned = (.running(agents: Self.sampleAgents.count), true)
+            state.herdr = state.agents.status
+            state.agentList = Self.sampleAgents
+        }
         // Only select what this mouse has.
         let wanted = CommandLine.arguments.contains("--wheel") ? .thumbWheel : slot ?? state.profile.firstSelected
         if state.profile.control(wanted) != nil { state.selected = wanted }
-        let host: NSView = extras
-            ? NSHostingView(rootView: ExtrasView(state: state))
-            : NSHostingView(rootView: ContentView(state: state))
-        host.frame = extras ? NSRect(origin: .zero, size: host.fittingSize) : NSRect(x: 0, y: 0, width: 1010, height: 690)
+        let host: NSView = NSHostingView(rootView: ContentView(state: state))
+        host.frame = NSRect(x: 0, y: 0, width: 1010, height: 690)
         let w = NSWindow(contentRect: host.frame, styleMask: [.borderless], backing: .buffered, defer: false)
         w.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
         w.contentView = host
@@ -322,6 +331,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         host.cacheDisplay(in: host.bounds, to: rep)
         try? rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: path))
     }
+}
+
+extension AppDelegate {
+    /// Made-up agents for screenshots, so no real session ever ends up in a picture.
+    static let sampleAgents: [AgentInfo] = {
+        let rows: [(String, String, String)] = [
+            ("blocked", "payments-api", "review"), ("blocked", "mobile-app", "2"), ("done", "docs-site", "1"),
+            ("working", "mouseherdr", "1"), ("working", "search-index", "bench"), ("idle", "playground", "3"),
+        ]
+        var list = AgentWatcher.parse(try! JSONSerialization.data(withJSONObject: ["terminals": rows.enumerated().map { i, r in
+            ["address": "t\(i)", "agent": "claude-code", "status": r.0, "where": "\(r.1) / \(r.2)"]
+        }]))
+        if list.count > 1 {
+            list[0].kind = "question"
+            list[0].message = "answer: Should refunds over $500 need a second approver, or keep the single-step flow we have today? (Second approver (Recommended) · Keep single step · Decide per region)"
+            list[1].kind = "permission"
+            list[1].message = "Allow running the database migration on staging? (Yes · Yes, and don't ask again · No)"
+        }
+        return list
+    }()
 }
 
 /// Shown once, the first time the app starts without opening its window.
@@ -334,7 +363,7 @@ struct MenuBarNotice: View {
                 Image(systemName: "computermouse.fill").font(.system(size: 18)).foregroundStyle(Palette.accent)
                 Text("MouseHerdr is running").font(.system(size: 14, weight: .bold, design: .rounded))
             }
-            Text("It now starts quietly and lives here in the menu bar. Click this mouse icon whenever you want to change what your buttons do.")
+            Text("It now starts quietly and lives here in the menu bar. Click this mouse icon to see your agents or change what your buttons do.")
                 .font(.system(size: 12)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             HStack {
                 Spacer()

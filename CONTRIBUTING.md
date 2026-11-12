@@ -80,6 +80,8 @@ Use the built-in sample data to avoid exposing live sessions:
 
 ```bash
 dist/MouseHerdr.app/Contents/MacOS/MouseHerdr --snapshot /tmp/mouseherdr-window.png
+dist/MouseHerdr.app/Contents/MacOS/MouseHerdr --snapshot /tmp/mouseherdr-buttons.png --tab buttons
+dist/MouseHerdr.app/Contents/MacOS/MouseHerdr --snapshot /tmp/mouseherdr-feel.png --tab feel
 dist/MouseHerdr.app/Contents/MacOS/MouseHerdr --snapshot /tmp/mouseherdr-generic.png --profile generic
 dist/MouseHerdr.app/Contents/MacOS/MouseHerdr --snapshot-ring /tmp/mouseherdr-agents.png
 dist/MouseHerdr.app/Contents/MacOS/MouseHerdr --snapshot-ring /tmp/mouseherdr-no-herdr.png --state not-installed --no-app

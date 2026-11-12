@@ -12,7 +12,9 @@ It talks to the mouse directly, so it does not need Logi Options+.
 
 **Buttons**
 
-![The MouseHerdr window](docs/window.png)
+![The Agents page](docs/window.png)
+
+![Assigning buttons](docs/buttons.png)
 
 - Assign any of the wheel click, top button, gesture button, forward, back and haptic panel
   to an action: back/forward, tabs, Mission Control, desktops, copy/paste, media keys,
@@ -45,7 +47,10 @@ It talks to the mouse directly, so it does not need Logi Options+.
 - A knock in the thumb pad when an agent starts waiting on you, and a pulse when one
   finishes.
 
-Everything optional has a switch under **Haptics & extras** in the window.
+The window has three pages. **Agents** comes first: it lists your agents with what each
+is asking, lets you answer or open one, and has a button to show the wheel. **Buttons** is
+the mouse picture for assigning actions, including "Show the agent wheel" for any button.
+**Feel** holds the haptic and window-snapping switches.
 
 ## Requirements
 
@@ -180,10 +185,10 @@ find them but MouseHerdr cannot. Check the connection without starting the mouse
 /Applications/MouseHerdr.app/Contents/MacOS/MouseHerdr --herdr-status
 ```
 
-**Haptics & extras** shows whether Herdr is missing, stopped, or running without agents.
+The **Agents** page shows whether Herdr is missing, stopped, or running without agents.
 MouseHerdr rechecks while it runs, so installing or starting Herdr does not need a
-MouseHerdr restart. To use MouseHerdr without Herdr, turn off the agent ring and agent
-haptics in that panel; the mouse controls, window dragging and other haptics work separately.
+MouseHerdr restart. To use MouseHerdr without Herdr, turn off the thumb-pad tap and agent
+haptics on that page; the mouse controls, window dragging and other haptics work separately.
 
 ### Update a source build
 

@@ -385,7 +385,7 @@ final class RingModel: ObservableObject {
 
         static let notInstalled = Notice(
             symbol: "shippingbox", title: "Herdr isn't installed",
-            detail: "This wheel shows the coding agents you run with Herdr. Get it at herdr.dev.\nTo stop this tap, see Haptics & extras.")
+            detail: "This wheel shows the coding agents you run with Herdr. Get it at herdr.dev.\nTo stop this tap, see the Agents page.")
         static let notRunning = Notice(
             symbol: "moon.zzz.fill", title: "herdr-core isn't running",
             detail: "It is installed but didn't answer. Start it with “hc\u{00A0}server\u{00A0}start” and your agents will appear here.",

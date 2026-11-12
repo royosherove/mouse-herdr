@@ -113,6 +113,10 @@ enum Catalog {
         ? "/System/Applications/Apps.app" : "/System/Applications/Launchpad.app"
 
     static let groups: [PresetGroup] = [
+        PresetGroup(title: "Agents", presets: [
+            // Handled by AppState, which owns the wheel.
+            Preset(id: "agentWheel", title: "Show the agent wheel", symbol: "circle.hexagongrid.fill", effect: .nothing),
+        ]),
         PresetGroup(title: "Mouse", presets: [
             Preset(id: "default", title: "Mouse default", symbol: "computermouse", effect: .passthrough),
             Preset(id: "none", title: "Do nothing", symbol: "nosign", effect: .nothing),
