@@ -32,7 +32,6 @@ jobs:
       version: ${{ steps.plan.outputs.version }}
       build: ${{ steps.plan.outputs.build }}
       previous_tag: ${{ steps.plan.outputs.previous_tag }}
-      resume_draft: ${{ steps.plan.outputs.resume_draft }}
       sha: ${{ env.RELEASE_SHA }}
     env:
       GH_TOKEN: ${{ github.token }}
@@ -105,11 +104,15 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           PREVIOUS_TAG: ${{ needs.plan.outputs.previous_tag }}
-          RESUME_DRAFT: ${{ needs.plan.outputs.resume_draft }}
         run: |
           current="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/main" --jq '.object.sha')"
           if [ "$current" != "$RELEASE_SHA" ]; then
             echo "A newer commit reached main during the build; leaving Latest unchanged."
+            exit 0
+          fi
+          state="$(python3 scripts/release_plan.py publish-state)"
+          if [ "$state" = published ]; then
+            echo "This version is already published; leaving its assets unchanged."
             exit 0
           fi
           cat > notes.md <<EOF
@@ -135,7 +138,7 @@ jobs:
           \`shasum -a 256 -c MouseHerdr.zip.sha256\` in that directory.
 
           EOF
-          if [ "$RESUME_DRAFT" = true ]; then
+          if [ "$state" = draft ]; then
             # Retry an interrupted upload without overwriting a published release.
             gh release upload "v${VERSION}" dist/MouseHerdr.zip dist/MouseHerdr.zip.sha256 \
               --repo "$GITHUB_REPOSITORY" --clobber

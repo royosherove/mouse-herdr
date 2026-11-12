@@ -76,6 +76,29 @@ def github_api(path, *, missing_ok=False):
         raise RuntimeError(f"GitHub API failed with HTTP {error.code}: {path}") from None
 
 
+def publication_state(head, version):
+    # REST's release-by-tag endpoint only finds published releases. Query pending
+    # tags through GraphQL, in the publishing job where the token has write access.
+    owner, name = os.environ["GITHUB_REPOSITORY"].split("/", 1)
+    query = """query($owner: String!, $name: String!, $tag: String!) {
+      repository(owner: $owner, name: $name) {
+        release(tagName: $tag) { isDraft targetCommitish }
+      }
+    }"""
+    response = subprocess.check_output([
+        "gh", "api", "graphql", "-f", f"query={query}",
+        "-f", f"owner={owner}", "-f", f"name={name}", "-f", f"tag=v{version}",
+    ], text=True)
+    release = json.loads(response)["data"]["repository"]["release"]
+    if release is None:
+        return "new"
+    if not release["isDraft"]:
+        return "published"
+    if release["targetCommitish"] != head:
+        raise ValueError("An existing draft targets a different commit; review it before releasing.")
+    return "draft"
+
+
 def checked_plan(head):
     if not re.fullmatch(r"[0-9a-f]{40}", head):
         raise ValueError("RELEASE_SHA must be a full commit SHA.")
@@ -97,15 +120,17 @@ def checked_plan(head):
     result = plan_release(head, latest["tag_name"] if latest else None)
     if result["publish"] == "true":
         existing = github_api(f"releases/tags/v{result['version']}", missing_ok=True)
-        if existing and not existing["draft"]:
+        if existing:
             return {"publish": "false", "reason": "This version is already published."}
-        if existing and existing["target_commitish"] != head:
-            raise ValueError("An existing draft targets a different commit; review it before releasing.")
-        result["resume_draft"] = "true" if existing else "false"
     return result
 
 
 def main():
+    if sys.argv[1:] == ["publish-state"]:
+        print(publication_state(os.environ["RELEASE_SHA"], os.environ["VERSION"]))
+        return
+    if sys.argv[1:]:
+        raise ValueError("Usage: release_plan.py [publish-state]")
     result = checked_plan(os.environ["RELEASE_SHA"])
     print(result.pop("reason"))
     with open(os.environ["GITHUB_OUTPUT"], "a") as output:

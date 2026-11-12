@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Exercise release selection with real Git histories and simulated GitHub responses."""
 
+import json
 import os
 from pathlib import Path
 import subprocess
@@ -8,7 +9,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from release_plan import checked_plan, plan_release
+from release_plan import checked_plan, plan_release, publication_state
 
 
 class ReleaseChangesTests(unittest.TestCase):
@@ -144,18 +145,42 @@ class ReleaseGateTests(unittest.TestCase):
     def test_first_tested_release_can_publish(self):
         plan = self.run_plan()
         self.assertEqual(plan["publish"], "true")
-        self.assertEqual(plan["resume_draft"], "false")
 
     def test_published_versions_are_not_overwritten(self):
         self.assertEqual(self.run_plan(existing={"draft": False})["publish"], "false")
 
-    def test_interrupted_upload_can_resume_the_same_commit(self):
-        plan = self.run_plan(existing={"draft": True, "target_commitish": self.SHA})
-        self.assertEqual(plan["resume_draft"], "true")
 
-    def test_draft_for_another_commit_cannot_be_reused(self):
+class PublicationStateTests(unittest.TestCase):
+    SHA = "a" * 40
+
+    def state(self, release):
+        response = {"data": {"repository": {"release": release}}}
+        with patch.dict(os.environ, {"GITHUB_REPOSITORY": "example/mouse-herdr"}), patch(
+            "release_plan.subprocess.check_output", return_value=json.dumps(response),
+        ) as request:
+            state = publication_state(self.SHA, "1.0.5")
+            self.assertEqual(request.call_args.args[0][:3], ["gh", "api", "graphql"])
+            return state
+
+    def test_new_release_can_be_created(self):
+        self.assertEqual(self.state(None), "new")
+
+    def test_published_release_is_never_overwritten(self):
+        self.assertEqual(self.state({"isDraft": False}), "published")
+
+    def test_pending_draft_can_resume_for_the_same_commit(self):
+        self.assertEqual(self.state({"isDraft": True, "targetCommitish": self.SHA}), "draft")
+
+    def test_draft_for_another_commit_is_rejected(self):
         with self.assertRaisesRegex(ValueError, "different commit"):
-            self.run_plan(existing={"draft": True, "target_commitish": "b" * 40})
+            self.state({"isDraft": True, "targetCommitish": "b" * 40})
+
+    def test_api_failure_cannot_be_mistaken_for_a_new_release(self):
+        with patch.dict(os.environ, {"GITHUB_REPOSITORY": "example/mouse-herdr"}), patch(
+            "release_plan.subprocess.check_output", side_effect=subprocess.CalledProcessError(1, "gh"),
+        ):
+            with self.assertRaises(subprocess.CalledProcessError):
+                publication_state(self.SHA, "1.0.5")
 
 
 if __name__ == "__main__":
