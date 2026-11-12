@@ -29,17 +29,6 @@ fi
 [ -f local.env ] && source local.env
 BUNDLE_ID="${BUNDLE_ID:-dev.mouseherdr.app}"
 SIGNING="${SIGNING:-local}"
-# The version shown in Finder. Releases pass their own; local builds use the VERSION file.
-VERSION="${VERSION:-$(tr -d '[:space:]' < VERSION)}"
-BUILD_NUMBER="${BUILD_NUMBER:-1}"
-if [[ ! "$VERSION" =~ ^[0-9]+(\.[0-9]+){1,2}$ ]]; then
-  echo "VERSION must look like 1.0 or 1.0.3." >&2
-  exit 2
-fi
-if [[ ! "$BUILD_NUMBER" =~ ^[0-9]+$ ]]; then
-  echo "BUILD_NUMBER must be a whole number." >&2
-  exit 2
-fi
 # UNIVERSAL=1 builds one app that runs on both Apple silicon and Intel Macs.
 BUILD_FLAGS=(-c release)
 if [ "${UNIVERSAL:-0}" = 1 ]; then BUILD_FLAGS+=(--arch arm64 --arch x86_64); fi
@@ -51,6 +40,20 @@ case "$SIGNING" in
   local|adhoc) ;;
   *) echo "SIGNING must be local or adhoc." >&2; exit 2 ;;
 esac
+
+# The version shown in Finder. Releases pass their own; local builds use the VERSION file.
+if [ -z "${VERSION:-}" ]; then
+  if [ -f VERSION ]; then VERSION="$(tr -d '[:space:]' < VERSION)"; else VERSION=1.0; fi
+fi
+BUILD_NUMBER="${BUILD_NUMBER:-1}"
+if [[ ! "$VERSION" =~ ^[0-9]+(\.[0-9]+){1,2}$ ]]; then
+  echo "VERSION must look like 1.0 or 1.0.3." >&2
+  exit 2
+fi
+if [[ ! "$BUILD_NUMBER" =~ ^[0-9]+$ ]]; then
+  echo "BUILD_NUMBER must be a whole number." >&2
+  exit 2
+fi
 
 APP="dist/MouseHerdr.app"
 # Keep the compiler's exit status and diagnostics. A previous binary may still exist after failure.
