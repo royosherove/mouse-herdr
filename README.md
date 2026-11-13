@@ -1,5 +1,7 @@
 # MouseHerdr
 
+[![Visit the MouseHerdr website](https://img.shields.io/badge/Visit_the_MouseHerdr_website-mouseherdr.dev-blue?style=for-the-badge)](https://mouseherdr.dev/)
+
 A small, friendly macOS menu bar app for the Logitech MX Master 4. Pick a button on a
 picture of the mouse, choose what it does, and you're done. It also uses the mouse's haptic
 motor, and it can show and answer your coding agents from a wheel around the pointer.
