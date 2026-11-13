@@ -8,6 +8,12 @@ It talks to the mouse directly, so it does not need Logi Options+.
 
 ![The agent wheel around the pointer](docs/agent-wheel.png)
 
+## Watch the trailer
+
+[![MouseHerdr: Welcome to My Herd — watch on YouTube](https://i.ytimg.com/vi/76AmPMwFGJI/hqdefault.jpg)](https://youtu.be/76AmPMwFGJI)
+
+Click the thumbnail to watch **MouseHerdr: Welcome to My Herd** on YouTube.
+
 ## What it does
 
 **Buttons**
