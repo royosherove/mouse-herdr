@@ -6,13 +6,12 @@ motor, and it can show and answer your coding agents from a wheel around the poi
 
 It talks to the mouse directly, so it does not need Logi Options+.
 
-![The agent wheel around the pointer](docs/agent-wheel.png)
+<a href="https://youtu.be/76AmPMwFGJI" target="_blank" rel="noopener noreferrer">
+  <img src="docs/agent-wheel.gif" alt="MouseHerdr in action — watch the trailer on YouTube" width="800">
+</a>
 
-## Watch the trailer
-
-[![MouseHerdr: Welcome to My Herd — watch on YouTube](https://i.ytimg.com/vi/76AmPMwFGJI/hqdefault.jpg)](https://youtu.be/76AmPMwFGJI)
-
-Click the thumbnail to watch **MouseHerdr: Welcome to My Herd** on YouTube.
+Click the GIF to watch **MouseHerdr: Welcome to My Herd** on YouTube
+(⌘/Ctrl-click to open in a new tab).
 
 ## What it does
 
