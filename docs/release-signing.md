@@ -81,8 +81,12 @@ The pipeline rejects a secret that does not match the app's public key.
 Both the feed and archive signatures are required before extraction. Developer ID code
 signing and notarization still apply. Keep the public app's bundle identifier and Apple
 team stable across releases to preserve macOS permissions. The release workflow sets
-`RELEASE_BUILD=1`; source builds leave it off, even when signed with Developer ID, and
-do not start the updater. Ad-hoc builds also cannot start it. Do not casually replace the Sparkle key: deployed apps trust the
+`RELEASE_BUILD=1`; source builds leave it off, even when signed with Developer ID or
+ad-hoc, and never check or download by themselves. Such a build starts the updater only
+when its owner chooses **Install Latest Release…**, and refuses every check Sparkle then
+schedules. Sparkle lets the release take the place of a build with another signing
+identity because the build carries the same public update key, and it still requires the
+signed feed and archive. Do not casually replace the Sparkle key: deployed apps trust the
 old key, so key rotation requires a planned migration following Sparkle's documentation.
 
 Run `python3 scripts/test_update_feed.py` after resolving packages. This uses temporary
@@ -91,3 +95,11 @@ For a full installer test, use a disposable Mac/VM and two Developer ID signed,
 notarized builds with the same identifier, team and Sparkle key. Check background
 download, restart, normal quit installation, offline What's New, and retained
 Accessibility/Input Monitoring. Do not run an update test against a working mouse setup.
+
+To check that a source build can still be replaced by the published release without
+running it, build one with a throwaway `BUNDLE_ID` and `SIGNING=adhoc`, copy
+`dist/MouseHerdr.app` to an empty temporary folder, and point Sparkle's command-line
+updater (`sparkle-cli` in Sparkle's source, compiled against the resolved framework) at
+the copy with `--check-immediately`. It downloads, verifies and installs the release over
+the copy and starts nothing. Afterwards the copy should pass `codesign --verify --deep
+--strict`, `xcrun stapler validate` and `spctl --assess --type execute`.

@@ -64,13 +64,15 @@ To reproduce a release build locally:
 UNIVERSAL=1 SIGNING=adhoc VERSION=1.0.0 BUILD_NUMBER=1 ./build.sh
 ```
 
-That local test build is ad-hoc signed and has automatic updates disabled. Published
+That local test build is ad-hoc signed and, like every source build, never updates by
+itself: it only offers **Install Latest Release…** in Settings. Published
 releases are Developer ID signed and notarized; see [release signing](docs/release-signing.md)
 for the credentials, nested Sparkle signing, and update feed. Keep the public bundle
 identifier, Apple team and Sparkle key stable. PR tests require no release credentials.
 
-Update tests cover persistent opt-out, explicit restart, once-per-upgrade notes, nested
-signing order, and archive/feed signature rejection using temporary test keys. Packaged
+Update tests cover persistent opt-out, explicit restart, once-per-upgrade notes, a source
+build that checks only when asked, nested signing order, and archive/feed signature
+rejection using temporary test keys. Packaged
 tests also check the embedded framework and offline notes. To inspect the new screens
 without starting mouse capture or the updater, use `--snapshot` with `--tab settings
 --update-ready`, or with `--whats-new`, and a temporary `CFFIXED_USER_HOME`.

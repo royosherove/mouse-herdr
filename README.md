@@ -220,8 +220,15 @@ automatic checks and downloads. An already prepared update still installs on qui
 available from the menu bar and Settings.
 
 Updates use Sparkle to verify the signed feed and download before installing the signed
-app. Source and ad-hoc builds do not auto-update to public releases.
-Older releases without the updater need one manual download to get this feature.
+app. Older releases without the updater need one manual download to get this feature.
+
+A build made from source never checks for an update or installs one by itself. To move it
+to the public release, choose **Install Latest Release…** in **Settings** or the menu bar.
+MouseHerdr shows the latest release, downloads it when you agree, verifies it the same
+way, puts it in the build's place and restarts. From then on it updates itself like any
+release. Your button assignments stay saved. The release is signed by its developer rather
+than on your Mac, so [grant Accessibility and Input Monitoring](#grant-permissions) again
+afterwards, removing the older MouseHerdr entries first if macOS still lists them.
 
 ### Build from source
 
@@ -331,6 +338,9 @@ git pull --ff-only
 
 The installer quits the running copy before replacing it. Your assignments and preferences
 remain in your user Library.
+
+To stop building it yourself, choose **Install Latest Release…** in Settings instead: see
+[Automatic updates](#automatic-updates).
 
 ### What the build script does
 

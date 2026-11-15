@@ -1,3 +1,4 @@
+import Sparkle
 import XCTest
 @testable import MouseHerdr
 
@@ -80,6 +81,87 @@ final class UpdateTests: XCTestCase {
         XCTAssertEqual(manager.phase, .idle)
         manager.checkForUpdates()
         XCTAssertEqual(manager.phase, .idle)
-        XCTAssertFalse(UpdateManager.isReleaseBundle(Bundle(for: Self.self)))
+        XCTAssertEqual(manager.kind, .unbundled)
+        XCTAssertEqual(BuildKind(Bundle(for: Self.self)), .unbundled)
+        manager.start()
+        XCTAssertFalse(manager.canCheck, "a copy with no feed has nothing to check")
+    }
+
+    func testKindComesFromTheBundleAndClaimingToBeAReleaseIsNotEnough() throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("MouseHerdr.UpdateTests.\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: folder) }
+        func kind(_ name: String, _ info: [String: Any]) throws -> BuildKind {
+            let contents = folder.appendingPathComponent("\(name).app/Contents")
+            try FileManager.default.createDirectory(at: contents, withIntermediateDirectories: true)
+            try PropertyListSerialization.data(fromPropertyList: info, format: .xml, options: 0)
+                .write(to: contents.appendingPathComponent("Info.plist"))
+            return BuildKind(try XCTUnwrap(Bundle(url: contents.deletingLastPathComponent())))
+        }
+        let built: [String: Any] = ["CFBundleIdentifier": BuildKind.releaseIdentifier, "SUPublicEDKey": "key",
+                                    "SUFeedURL": "https://example.com/appcast.xml", "MouseHerdrReleaseBuild": false]
+        XCTAssertEqual(try kind("source", built), .source)
+        // Not signed with a Developer ID, so it must not update itself whatever it says.
+        XCTAssertEqual(try kind("claimed", built.merging(["MouseHerdrReleaseBuild": true]) { $1 }), .source)
+        XCTAssertEqual(try kind("no-feed", ["CFBundleIdentifier": BuildKind.releaseIdentifier]), .unbundled)
+    }
+
+    func testSourceBuildOffersTheLatestReleaseOnceTheAppHasStarted() {
+        let manager = UpdateManager(defaults: defaults, kind: .source)
+        XCTAssertFalse(manager.canCheck, "snapshots and developer tools never start it")
+        XCTAssertEqual(manager.status, "This is a source build, so it doesn’t update itself.")
+        XCTAssertEqual(manager.phase.menuTitle(for: manager.kind), "Install Latest Release…")
+        XCTAssertEqual(manager.phase.menuTitle(for: .release), "Check for Updates…")
+        manager.start()
+        XCTAssertTrue(manager.canCheck)
+        XCTAssertEqual(manager.phase, .idle)
+        XCTAssertNil(manager.lastChecked, "offering the release does not start the updater")
+    }
+
+    func testSourceBuildChecksOnlyWhenItsOwnerAsks() {
+        let checks: [SPUUpdateCheck] = [.updates, .updatesInBackground, .updateInformation]
+        XCTAssertEqual(checks.map(BuildKind.source.allows), [true, false, false])
+        XCTAssertEqual(checks.map(BuildKind.release.allows), [true, true, true])
+        let source = UpdateManager(defaults: defaults, kind: .source)
+        XCTAssertNoThrow(try source.permit(.updates))
+        XCTAssertThrowsError(try source.permit(.updatesInBackground))
+        XCTAssertNoThrow(try UpdateManager(defaults: defaults, kind: .release).permit(.updatesInBackground))
+        // Sparkle asks only a delegate that answers to this exact name. Without it a source
+        // build would follow the daily schedule and replace itself.
+        XCTAssertTrue(source.responds(to: #selector(SPUUpdaterDelegate.updater(_:mayPerform:))))
+    }
+
+    func testCheckASourceBuildRefusedReportsNothingAndOneItsOwnerAskedForDoes() {
+        let manager = UpdateManager(defaults: defaults, kind: .source)
+        manager.finished(.updatesInBackground, error: NSError(domain: "MouseHerdr.Updates", code: 1))
+        XCTAssertEqual(manager.phase, .idle)
+        manager.finished(.updates, error: NSError(domain: SUSparkleErrorDomain, code: Int(SUError.noUpdateError.rawValue)))
+        XCTAssertEqual(manager.phase, .upToDate)
+        manager.finished(.updates, error: NSError(domain: NSURLErrorDomain, code: NSURLErrorNotConnectedToInternet))
+        guard case .failed = manager.phase else { return XCTFail("a failed download is shown") }
+        manager.finished(.updates, error: nil)
+        XCTAssertEqual(manager.phase, .idle)
+    }
+
+    func testStatusSaysHowThisCopyIsUpdated() {
+        let release = UpdateManager(defaults: defaults, kind: .release)
+        XCTAssertEqual(release.status, "Updates are checked automatically once a day.")
+        release.automaticUpdates = false
+        XCTAssertEqual(release.status, "Automatic updates are off. You can still check manually.")
+        release.readyToInstall(version: "1.0.50") {}
+        XCTAssertEqual(release.status, "MouseHerdr 1.0.50 is ready to install.")
+        XCTAssertTrue(UpdateManager(defaults: defaults, kind: .unbundled).status.hasPrefix("This is a source build."))
+    }
+
+    func testSwitchingToTheReleaseSaysOnlyWhatChanges() {
+        XCTAssertEqual(ReleaseSwitch.notes(keepsPermissions: true, keepsPreferences: true, path: "/Applications/MouseHerdr.app"),
+                       ["Your button assignments stay saved."])
+        XCTAssertEqual(ReleaseSwitch.notes(keepsPermissions: true, keepsPreferences: true,
+                                           path: NSHomeDirectory() + "/Applications/MouseHerdr.app").count, 1)
+        let notes = ReleaseSwitch.notes(keepsPermissions: false, keepsPreferences: false,
+                                        path: "/Volumes/Work/mouse-herdr/dist/MouseHerdr.app")
+        XCTAssertEqual(notes.count, 4)
+        XCTAssertTrue(notes[1].contains("Accessibility and Input Monitoring"))
+        XCTAssertTrue(notes[2].contains("go back to their defaults"))
+        XCTAssertTrue(notes[3].hasSuffix("in /Volumes/Work/mouse-herdr/dist."))
     }
 }

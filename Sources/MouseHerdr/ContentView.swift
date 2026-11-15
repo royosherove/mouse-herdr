@@ -44,7 +44,7 @@ struct ContentView: View {
                 case .buttons:
                     if state.choosingMouse { MousePickerPanel(state: state) } else { DetailPanel(state: state) }
                 case .feel: HapticsSidePanel(state: state)
-                case .settings: UpdateHelpPanel()
+                case .settings: UpdateHelpPanel(kind: state.updates.kind)
                 }
             }
             .frame(width: 310)

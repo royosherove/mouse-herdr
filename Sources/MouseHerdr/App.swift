@@ -379,8 +379,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         state.updates.start()
         updateWatch = state.updates.$phase.combineLatest(state.updates.$canCheck)
             .receive(on: DispatchQueue.main).sink { [weak self] phase, canCheck in
-                self?.updateMenuItem?.title = phase.menuTitle
-                self?.updateMenuItem?.isEnabled = phase.ready || canCheck
+                guard let self else { return }
+                self.updateMenuItem?.title = phase.menuTitle(for: self.state.updates.kind)
+                self.updateMenuItem?.isEnabled = phase.ready || canCheck
             }
         // A newly found mouse is pointed out under the menu bar icon while the window is closed.
         noticeWatch = state.$mouseNotice.receive(on: DispatchQueue.main).sink { [weak self] _ in self?.showMouseNotice() }
