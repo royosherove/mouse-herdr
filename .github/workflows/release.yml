@@ -53,7 +53,9 @@ jobs:
     if: needs.plan.outputs.publish == 'true'
     # This environment only permits main. PR builds never receive signing credentials.
     environment: release-signing
-    runs-on: macos-26
+    # The self-hosted Mac named by the MAC_RUNNER repository variable when it is set; it only
+    # accepts jobs for pushes to main. Otherwise GitHub-hosted macOS.
+    runs-on: ${{ vars.MAC_RUNNER && fromJSON(vars.MAC_RUNNER) || 'macos-26' }}
     timeout-minutes: 45
     permissions:
       contents: write

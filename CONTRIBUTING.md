@@ -34,7 +34,9 @@ name and a stand-in agent, and stops it afterwards; it does not connect to your 
 sessions.
 
 GitHub Actions runs the tests and packages an ad-hoc signed app on Intel and Apple silicon
-macOS runners. These checks do not validate Bluetooth hardware, privacy permission prompts
+macOS runners. Pull requests always use GitHub-hosted runners. For pushes to `main`, the Apple
+silicon job and the release can run on a self-hosted Mac instead, when the `MAC_RUNNER`
+repository variable lists its labels. These checks do not validate Bluetooth hardware, privacy permission prompts
 or behavior on every macOS release. For normal use, run `./build.sh install` with local
 signing as described in the [README](README.md).
 
