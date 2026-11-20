@@ -364,7 +364,11 @@ final class WheelAnswerTests: XCTestCase {
         XCTAssertNil(watcher.answering["t7"])
         XCTAssertEqual(try String(contentsOf: calls), "keys t7 3\n", "one key was asked for, the third choice")
         let log = logged()
-        XCTAssertTrue(log.contains("herdr-core held the answer to t7 for 1."), log)
+        // At least as long as the stand-in held it. Starting the stand-in adds to that, by more
+        // on a busy machine, so there is no upper bound.
+        let held = log.components(separatedBy: "herdr-core held the answer to t7 for ").dropFirst().first
+            .flatMap { Double($0.prefix { $0.isNumber || $0 == "." }) }
+        XCTAssertGreaterThanOrEqual(try XCTUnwrap(held, log), 1.2, log)
         XCTAssertFalse(log.contains("the answer was not sent"), log)
     }
 
