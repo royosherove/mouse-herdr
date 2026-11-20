@@ -286,7 +286,8 @@ extension MouseProfile {
 
     /// One control before it is given a place for its label.
     private struct Part {
-        let slot: Slot, title: String, blurb: String, source: MouseControl.Source
+        let slot: Slot, title: String, blurb: String
+        var source: MouseControl.Source
         let rect: CGRect
         var shape = MouseControl.Shape.button
         var gestures = false
@@ -303,9 +304,9 @@ extension MouseProfile {
                      body: MouseBody, buttons: Buttons, kind: Kind = .mouse, note: String? = nil) -> MouseProfile {
         let wheel = Part(slot: .middle, title: "Wheel click", blurb: "Pressing down on the scroll wheel.",
                          source: .button(2), rect: body.wheel, shape: .wheel)
-        let forward = Part(slot: .forward, title: "Forward button", blurb: "The front one of the two side buttons.",
+        var forward = Part(slot: .forward, title: "Forward button", blurb: "The front one of the two side buttons.",
                            source: .button(4), rect: body.forward)
-        let back = Part(slot: .back, title: "Back button", blurb: "The rear one of the two side buttons.",
+        var back = Part(slot: .back, title: "Back button", blurb: "The rear one of the two side buttons.",
                         source: .button(3), rect: body.back)
 
         var parts: [Part]
@@ -325,6 +326,9 @@ extension MouseProfile {
             parts = [Part(slot: .middle, title: "Middle click", blurb: "The middle click, as this mouse sends it to the Mac.",
                           source: .button(2), rect: body.wheel, shape: .wheel), forward, back]
         case .mxMaster:
+            // Logi Options+ captures the side buttons over HID++, and then macOS never reports them.
+            forward.source = .button(4, cid: 0x0056)
+            back.source = .button(3, cid: 0x0053)
             parts = [
                 wheel,
                 Part(slot: .modeShift, title: "Top button",

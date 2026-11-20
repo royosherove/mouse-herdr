@@ -277,8 +277,10 @@ final class MouseDetectorTests: XCTestCase {
 
     func testOtherProfilesCaptureOnlyWhatTheyNameAndTheMouseReports() {
         let threeS = MouseProfile.named("mxMaster3S")!
-        XCTAssertEqual(threeS.captures(among: mx4Controls), [.gesture: 0x00C3, .modeShift: 0x00C4])
-        XCTAssertEqual(threeS.captures(among: mx4Controls.filter { $0.cid != 0x00C3 }), [.modeShift: 0x00C4])
+        XCTAssertEqual(threeS.captures(among: mx4Controls), [.back: 0x0053, .forward: 0x0056, .gesture: 0x00C3, .modeShift: 0x00C4])
+        XCTAssertEqual(threeS.captures(among: mx4Controls.filter { $0.cid != 0x00C3 }), [.back: 0x0053, .forward: 0x0056, .modeShift: 0x00C4])
+        // The wheel click stays an ordinary button.
+        XCTAssertEqual(threeS.control(.middle)?.source, .button(2))
         // A mouse with only the usual buttons captures nothing over the link.
         XCTAssertTrue(MouseProfile.generic.captures(among: mx4Controls).isEmpty)
         XCTAssertTrue(MouseProfile.named("msBasicOptical")!.captures(among: mx4Controls).isEmpty)
