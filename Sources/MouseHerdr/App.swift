@@ -11,32 +11,17 @@ enum Main {
         if let i = args.firstIndex(of: "--icon"), i + 1 < args.count {
             renderIcon(to: args[i + 1]); return
         }
+        runCommandLineTool(args)
         let app = NSApplication.shared
         app.delegate = delegate
         app.run()
     }
 
+    /// The developer flags that print something and exit. They run before NSApplication starts,
+    /// so they also work where there is no window server to connect to, such as a CI runner that
+    /// runs as a background service without anyone logged in.
     @MainActor
-    static func renderIcon(to path: String) {
-        let r = ImageRenderer(content: IconView())
-        r.scale = 1
-        guard let cg = r.cgImage else { return }
-        let rep = NSBitmapImageRep(cgImage: cg)
-        try? rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: path))
-    }
-}
-
-final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
-    let state = AppState()
-    private var window: NSWindow?
-    private var statusItem: NSStatusItem?
-    private var updateMenuItem: NSMenuItem?
-    private var updateWatch: AnyCancellable?
-    private var whatsNewWindow: NSWindow?
-
-    func applicationDidFinishLaunching(_ note: Notification) {
-        let args = CommandLine.arguments
-
+    static func runCommandLineTool(_ args: [String]) {
         // Developer aid: say what the Herdr check finds, using the same code as the running app.
         // MOUSEHERDR_HC and MOUSEHERDR_HERDR_APP point it at other (or missing) commands.
         if args.contains("--herdr-status") {
@@ -109,6 +94,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             }
             exit(0)
         }
+    }
+
+    @MainActor
+    static func renderIcon(to path: String) {
+        let r = ImageRenderer(content: IconView())
+        r.scale = 1
+        guard let cg = r.cgImage else { return }
+        let rep = NSBitmapImageRep(cgImage: cg)
+        try? rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: path))
+    }
+}
+
+final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
+    let state = AppState()
+    private var window: NSWindow?
+    private var statusItem: NSStatusItem?
+    private var updateMenuItem: NSMenuItem?
+    private var updateWatch: AnyCancellable?
+    private var whatsNewWindow: NSWindow?
+
+    func applicationDidFinishLaunching(_ note: Notification) {
+        let args = CommandLine.arguments
 
         // Developer aid: draw every mouse in the list on one sheet, to check the drawings.
         if let i = args.firstIndex(of: "--snapshot-mice"), i + 1 < args.count {
